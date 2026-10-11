@@ -37,6 +37,7 @@ Err_t CompInitButton(Comp_t *p_comp, const_str_t label, CompDim_t dim, Color_t c
 Err_t CompInitCircle(Comp_t *p_comp, const_str_t label, CompDim_t dim, Color_t color, uint32_t radius, uint8_t is_filled);
 Err_t CompInitLine(Comp_t *p_comp, const_str_t label, int32_t x1, int32_t y1, int32_t x2, int32_t y2, Color_t color, uint32_t thickness);
 Err_t CompInitText(Comp_t *p_comp, const_str_t label, int32_t x, int32_t y, const_str_t text_str, Color_t color, uint32_t font_size);
+Err_t CompSetTextAlign(CompTextCfg_t *p_text, TextAlign_t align, TextVAlign_t valign, uint8_t is_wrap);
 Err_t CompInitTable(Comp_t *p_comp, const_str_t label, CompDim_t dim, Color_t color, uint32_t rows, uint32_t cols, uint8_t is_scrollable);
 Err_t CompSetBorder(Comp_t *p_comp, uint32_t border_size, Color_t border_color);
 Err_t CompSetPosition(Comp_t *p_comp, int32_t offset_x, int32_t offset_y);
@@ -59,7 +60,7 @@ Err_t CompHitTest(const Comp_t *p_comp, int32_t x, int32_t y, uint8_t *p_is_hit)
  * @param radius[in] Corner radius in pixels
  * @param is_filled[in] Non-zero to fill the rectangle, 0 for outline only
  * @return APP_SUCCESS on success, or error code on invalid parameters
- * @note Clamps rotation check to COMP_MAX_ROTATION_DEG (180 degrees)
+ * @note Clamps rotation check to COMP_MAX_ROTATION_DEG (360 degrees)
  */
 Err_t CompInitRect(Comp_t *p_comp, const_str_t label, CompDim_t dim, Color_t color, uint32_t radius, uint8_t is_filled) {
     #if (1U == PARAM_CHECK_EN)
@@ -69,7 +70,7 @@ Err_t CompInitRect(Comp_t *p_comp, const_str_t label, CompDim_t dim, Color_t col
         return APP_ERROR_NULL;
     }
     if (dim.Rotation > COMP_MAX_ROTATION_DEG) {
-        APP_ERR("Rotation exceeds 180 degrees!");
+        APP_ERR("Rotation exceeds 360 degrees!");
         return APP_ERROR_INVALID_PARAM;
     }
     #endif /* (1U == PARAM_CHECK_EN) */
@@ -245,11 +246,14 @@ Err_t CompInitText(Comp_t *p_comp, const_str_t label, int32_t x, int32_t y, cons
     p_comp->Type.Text.Color        = color;
     p_comp->Type.Text.Dim.OffsetX  = x;
     p_comp->Type.Text.Dim.OffsetY  = y;
-    p_comp->Type.Text.Dim.W        = 120U;
+    p_comp->Type.Text.Dim.W        = 0U;
     p_comp->Type.Text.Dim.H        = font_size;
     p_comp->Type.Text.Dim.Rotation = 0U;
     p_comp->Type.Text.TextStr      = text_str;
     p_comp->Type.Text.FontSize     = font_size;
+    p_comp->Type.Text.Align        = TEXT_ALIGN_LEFT;
+    p_comp->Type.Text.VAlign       = TEXT_VALIGN_TOP;
+    p_comp->Type.Text.IsWrap       = 0U;
     p_comp->Listeners.Count        = 0U;
     p_comp->Listeners.p_Events     = NULL;
     p_comp->p_ExtComps             = NULL;
@@ -257,6 +261,35 @@ Err_t CompInitText(Comp_t *p_comp, const_str_t label, int32_t x, int32_t y, cons
     p_comp->IsVisible              = 1U;
 
     /* Return success after initializing text component */
+    return APP_SUCCESS;
+}
+
+/* Configure horizontal alignment, vertical alignment, and word wrapping for a text configuration
+ * @param p_text[in/out] Pointer to text configuration structure
+ * @param align[in] Horizontal alignment (TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER, TEXT_ALIGN_RIGHT)
+ * @param valign[in] Vertical alignment (TEXT_VALIGN_TOP, TEXT_VALIGN_MIDDLE, TEXT_VALIGN_BOTTOM)
+ * @param is_wrap[in] Non-zero to enable automatic word wrapping within p_text->Dim.W
+ * @return APP_SUCCESS on success, or error code
+ * @note Works for both standalone COMP_CAST_TEXT components and child CompTextCfg_t in p_ExtComps
+ */
+Err_t CompSetTextAlign(CompTextCfg_t *p_text, TextAlign_t align, TextVAlign_t valign, uint8_t is_wrap) {
+    #if (1U == PARAM_CHECK_EN)
+    /* Validate text config pointer and alignment enum ranges */
+    if (NULL == p_text) {
+        APP_ERR("p_text is NULL!");
+        return APP_ERROR_NULL;
+    }
+    if ((align > TEXT_ALIGN_RIGHT) || (valign > TEXT_VALIGN_BOTTOM)) {
+        APP_ERR("Invalid text alignment enum value!");
+        return APP_ERROR_INVALID_PARAM;
+    }
+    #endif /* (1U == PARAM_CHECK_EN) */
+
+    p_text->Align  = align;
+    p_text->VAlign = valign;
+    p_text->IsWrap = is_wrap;
+
+    /* Return success after updating text alignment and wrap settings */
     return APP_SUCCESS;
 }
 
@@ -431,17 +464,21 @@ Err_t CompScrollTable(Comp_t *p_comp, int32_t delta_x, int32_t delta_y) {
 
 /* Configure a layer as scrollable within a given viewport rectangle
  * @param p_layer[in/out] Pointer to target layer
- * @param viewport[in] Clipping viewport dimensions for the scrollable layer
+ * @param rect_clip[in] Clipping viewport dimensions and rotation (0-360 deg) for the layer
  * @param is_scrollable[in] Non-zero to enable layer scrolling
- * @return APP_SUCCESS on success, or APP_ERROR_NULL
- * @note Allows an entire layer (with attached table/components) to scroll together
+ * @return APP_SUCCESS on success, or error code
+ * @note Allows an entire layer (with attached table/components) to scroll and rotate together
  */
 Err_t LayerSetScrollable(Layer_t *p_layer, CompDim_t rect_clip, uint8_t is_scrollable) {
     #if (1U == PARAM_CHECK_EN)
-    /* Validate layer pointer */
+    /* Validate layer pointer and rotation range (0 to 360 degrees) */
     if (NULL == p_layer) {
         APP_ERR("p_layer is NULL!");
         return APP_ERROR_NULL;
+    }
+    if (rect_clip.Rotation > COMP_MAX_ROTATION_DEG) {
+        APP_ERR("Layer RectClip rotation exceeds 360 degrees!");
+        return APP_ERROR_INVALID_PARAM;
     }
     #endif /* (1U == PARAM_CHECK_EN) */
 
@@ -489,19 +526,22 @@ Err_t LayerScroll(Layer_t *p_layer, int32_t delta_x, int32_t delta_y) {
     return APP_SUCCESS;
 }
 
-/* Check whether a 2D point (x, y) lies inside the bounding box of a component
+/* Check whether a 2D point (x, y) lies inside the (optionally rotated) bounding box of a component
  * @param p_comp[in] Pointer to component to test
- * @param x[in] X coordinate to test
- * @param y[in] Y coordinate to test
+ * @param x[in] X coordinate to test in Layer (0,0) coordinates
+ * @param y[in] Y coordinate to test in Layer (0,0) coordinates
  * @param p_is_hit[out] Outputs 1U if point is inside component, 0U otherwise
  * @return APP_SUCCESS on success, or APP_ERROR_NULL
- * @note Used by mouse event dispatching and drag-and-drop hit detection
+ * @note Supports component rotation (0-360 degrees) by inverse-rotating (x, y) around component center
  */
 Err_t CompHitTest(const Comp_t *p_comp, int32_t x, int32_t y, uint8_t *p_is_hit) {
-    int32_t comp_x;
-    int32_t comp_y;
-    int32_t comp_w;
-    int32_t comp_h;
+    int32_t  comp_x;
+    int32_t  comp_y;
+    int32_t  comp_w;
+    int32_t  comp_h;
+    int32_t  test_x;
+    int32_t  test_y;
+    uint16_t rot_deg;
 
     #if (1U == PARAM_CHECK_EN)
     /* Validate input pointers */
@@ -518,14 +558,31 @@ Err_t CompHitTest(const Comp_t *p_comp, int32_t x, int32_t y, uint8_t *p_is_hit)
         return APP_SUCCESS;
     }
 
-    comp_x = p_comp->Type.Rect.Dim.OffsetX;
-    comp_y = p_comp->Type.Rect.Dim.OffsetY;
-    comp_w = (int32_t)p_comp->Type.Rect.Dim.W;
-    comp_h = (int32_t)p_comp->Type.Rect.Dim.H;
+    comp_x  = p_comp->Type.Rect.Dim.OffsetX;
+    comp_y  = p_comp->Type.Rect.Dim.OffsetY;
+    comp_w  = (int32_t)p_comp->Type.Rect.Dim.W;
+    comp_h  = (int32_t)p_comp->Type.Rect.Dim.H;
+    test_x  = x;
+    test_y  = y;
+    rot_deg = (uint16_t)(p_comp->Type.Rect.Dim.Rotation % 360U);
 
-    /* Check if point (x, y) falls within [comp_x, comp_x + comp_w) and [comp_y, comp_y + comp_h) */
-    if ((x >= comp_x) && (x < (comp_x + comp_w)) &&
-        (y >= comp_y) && (y < (comp_y + comp_h))) {
+    /* Inverse-rotate test coordinates around component center if Rotation is non-zero */
+    if (0U != rot_deg) {
+        double cx    = (double)comp_x + ((double)comp_w * 0.5);
+        double cy    = (double)comp_y + ((double)comp_h * 0.5);
+        double dx    = (double)x - cx;
+        double dy    = (double)y - cy;
+        double rad   = (double)rot_deg * (M_PI / 180.0);
+        double cos_a = SDL_cos(rad);
+        double sin_a = SDL_sin(rad);
+
+        test_x = (int32_t)(cx + (dx * cos_a) + (dy * sin_a));
+        test_y = (int32_t)(cy - (dx * sin_a) + (dy * cos_a));
+    }
+
+    /* Check if unrotated point falls within [comp_x, comp_x + comp_w) and [comp_y, comp_y + comp_h) */
+    if ((test_x >= comp_x) && (test_x < (comp_x + comp_w)) &&
+        (test_y >= comp_y) && (test_y < (comp_y + comp_h))) {
         *p_is_hit = 1U;
     } else {
         *p_is_hit = 0U;

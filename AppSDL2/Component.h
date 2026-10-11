@@ -15,7 +15,7 @@
 /* macros *****************************************************************************************
  **************************************************************************************************/
 
-#define COMP_MAX_ROTATION_DEG           (180U)
+#define COMP_MAX_ROTATION_DEG           (360U)
 
 /* definitions ************************************************************************************
  **************************************************************************************************/
@@ -55,7 +55,7 @@ struct CompDim_st {
     uint32_t H;
     int32_t  OffsetX;
     int32_t  OffsetY;
-    uint16_t Rotation;                  /* 0 to 180 degrees */
+    uint16_t Rotation;                  /* 0 to 360 degrees */
 };
 typedef struct CompDim_st   CompDim_t;
 
@@ -96,12 +96,31 @@ struct CompLineCfg_st {
 };
 typedef struct CompLineCfg_st CompLineCfg_t;
 
+/* Horizontal text alignment modes */
+enum TextAlign_e {
+    TEXT_ALIGN_LEFT                     = (0U),
+    TEXT_ALIGN_CENTER                   = (1U),
+    TEXT_ALIGN_RIGHT                    = (2U)
+};
+typedef enum TextAlign_e    TextAlign_t;
+
+/* Vertical text alignment modes */
+enum TextVAlign_e {
+    TEXT_VALIGN_TOP                     = (0U),
+    TEXT_VALIGN_MIDDLE                  = (1U),
+    TEXT_VALIGN_BOTTOM                  = (2U)
+};
+typedef enum TextVAlign_e   TextVAlign_t;
+
 /* Text component configuration */
 struct CompTextCfg_st {
     Color_t      Color;
     CompDim_t    Dim;
     const_str_t  TextStr;
     uint32_t     FontSize;
+    TextAlign_t  Align;                 /* Horizontal alignment within Dim.W */
+    TextVAlign_t VAlign;                /* Vertical alignment within Dim.H */
+    uint8_t      IsWrap;                /* Non-zero to wrap text within Dim.W */
 };
 typedef struct CompTextCfg_st CompTextCfg_t;
 
@@ -196,6 +215,7 @@ Err_t CompInitButton(Comp_t *p_comp, const_str_t label, CompDim_t dim, Color_t c
 Err_t CompInitCircle(Comp_t *p_comp, const_str_t label, CompDim_t dim, Color_t color, uint32_t radius, uint8_t is_filled);
 Err_t CompInitLine(Comp_t *p_comp, const_str_t label, int32_t x1, int32_t y1, int32_t x2, int32_t y2, Color_t color, uint32_t thickness);
 Err_t CompInitText(Comp_t *p_comp, const_str_t label, int32_t x, int32_t y, const_str_t text_str, Color_t color, uint32_t font_size);
+Err_t CompSetTextAlign(CompTextCfg_t *p_text, TextAlign_t align, TextVAlign_t valign, uint8_t is_wrap);
 Err_t CompInitTable(Comp_t *p_comp, const_str_t label, CompDim_t dim, Color_t color, uint32_t rows, uint32_t cols, uint8_t is_scrollable);
 Err_t CompSetBorder(Comp_t *p_comp, uint32_t border_size, Color_t border_color);
 Err_t CompSetPosition(Comp_t *p_comp, int32_t offset_x, int32_t offset_y);

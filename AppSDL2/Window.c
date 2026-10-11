@@ -228,11 +228,11 @@ Err_t WindowInit(const_str_t title, uint32_t width, uint32_t height) {
     SDL_SetWindowMaximumSize(p_win, (int)width, (int)height);
     SDL_SetWindowResizable(p_win, SDL_FALSE);
 
-    /* Create hardware-accelerated or software fallback SDL2 renderer */
-    p_ren = SDL_CreateRenderer(p_win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+    /* Create hardware-accelerated or software fallback SDL2 renderer with target-texture support */
+    p_ren = SDL_CreateRenderer(p_win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC | SDL_RENDERER_TARGETTEXTURE);
     if (NULL == p_ren) {
         /* Fall back to software renderer if hardware acceleration is unavailable */
-        p_ren = SDL_CreateRenderer(p_win, -1, SDL_RENDERER_SOFTWARE);
+        p_ren = SDL_CreateRenderer(p_win, -1, SDL_RENDERER_SOFTWARE | SDL_RENDERER_TARGETTEXTURE);
     }
     if (NULL == p_ren) {
         APP_ERR("SDL_CreateRenderer failed: %s", SDL_GetError());

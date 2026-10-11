@@ -52,6 +52,9 @@ static EventRingQueue_t g_EventQueue = {
     .IsRunning = 0U
 };
 
+/* Active parent layer of the currently dragged component */
+static const Layer_t *gp_DraggedLayer = NULL;
+
 /* exported functions *****************************************************************************
  **************************************************************************************************/
 
@@ -71,11 +74,69 @@ Err_t EventListenerThreadStop(void);
 /* private functions ******************************************************************************
  **************************************************************************************************/
 
+static void MapWindowToLayerCoords(const Layer_t *p_layer,
+                                   int32_t        win_x,
+                                   int32_t        win_y,
+                                   int32_t       *p_local_x,
+                                   int32_t       *p_local_y,
+                                   uint8_t       *p_in_clip);
 static void TranslateAndForwardSdlEvent(const SDL_Event *p_sdl_ev, uint8_t *p_quit_requested);
 static int  EventListenerThreadEntry(void *p_arg);
 
 /* function implementations ***********************************************************************
  **************************************************************************************************/
+
+/* Map MainWindow (0,0) mouse coordinates into Layer (0,0) local coordinates (handling RectClip rotation)
+ * @param p_layer[in] Target layer whose RectClip and ScrollX/Y are used
+ * @param win_x[in] Mouse X in MainWindow (0,0) coordinates
+ * @param win_y[in] Mouse Y in MainWindow (0,0) coordinates
+ * @param p_local_x[out] Mapped X coordinate in Layer (0,0) space
+ * @param p_local_y[out] Mapped Y coordinate in Layer (0,0) space
+ * @param p_in_clip[out] Outputs 1U if point lies inside the (optionally rotated) RectClip, 0U otherwise
+ */
+static void MapWindowToLayerCoords(const Layer_t *p_layer,
+                                   int32_t        win_x,
+                                   int32_t        win_y,
+                                   int32_t       *p_local_x,
+                                   int32_t       *p_local_y,
+                                   uint8_t       *p_in_clip) {
+    int32_t  unrot_x = win_x;
+    int32_t  unrot_y = win_y;
+    uint16_t rot_deg = (uint16_t)(p_layer->RectClip.Rotation % 360U);
+
+    /* Inverse-rotate window point around RectClip center if Layer rotation is non-zero */
+    if (0U != rot_deg) {
+        double clip_w = (p_layer->RectClip.W > 0U) ? (double)p_layer->RectClip.W : (double)g_MainWindow.Width;
+        double clip_h = (p_layer->RectClip.H > 0U) ? (double)p_layer->RectClip.H : (double)g_MainWindow.Height;
+        double cx     = (double)p_layer->RectClip.OffsetX + (clip_w * 0.5);
+        double cy     = (double)p_layer->RectClip.OffsetY + (clip_h * 0.5);
+        double dx     = (double)win_x - cx;
+        double dy     = (double)win_y - cy;
+        double rad    = (double)rot_deg * (M_PI / 180.0);
+        double cos_a  = SDL_cos(rad);
+        double sin_a  = SDL_sin(rad);
+
+        unrot_x = (int32_t)(cx + (dx * cos_a) + (dy * sin_a));
+        unrot_y = (int32_t)(cy - (dx * sin_a) + (dy * cos_a));
+    }
+
+    *p_in_clip = 1U;
+    /* Check if unrotated point lies inside Layer RectClip bounds */
+    if ((p_layer->RectClip.W > 0U) && (p_layer->RectClip.H > 0U)) {
+        if ((unrot_x < p_layer->RectClip.OffsetX) ||
+            (unrot_x >= (p_layer->RectClip.OffsetX + (int32_t)p_layer->RectClip.W)) ||
+            (unrot_y < p_layer->RectClip.OffsetY) ||
+            (unrot_y >= (p_layer->RectClip.OffsetY + (int32_t)p_layer->RectClip.H))) {
+            *p_in_clip = 0U;
+        }
+    }
+
+    *p_local_x = unrot_x - p_layer->RectClip.OffsetX - p_layer->ScrollX;
+    *p_local_y = unrot_y - p_layer->RectClip.OffsetY - p_layer->ScrollY;
+
+    /* Return after mapping coordinates */
+    return;
+}
 
 /* Sequentially execute all registered callbacks on a component matching the incoming event type
  * @param p_comp[in/out] Target component whose listeners will be checked
@@ -142,8 +203,9 @@ Err_t EventHandleDragDrop(Layer_t *p_layers, uint32_t layer_count, const EventDa
         /* Search layers from top-most to bottom-most for a hit draggable component */
         for (layer_idx = (int32_t)layer_count - 1; layer_idx >= 0; layer_idx--) {
             Layer_t *p_layer = &p_layers[layer_idx];
-            int32_t  local_x;
-            int32_t  local_y;
+            int32_t  local_x = 0;
+            int32_t  local_y = 0;
+            uint8_t  in_clip = 1U;
 
             /* Skip invisible layers */
             if (0U == p_layer->IsVisible) {
@@ -151,20 +213,12 @@ Err_t EventHandleDragDrop(Layer_t *p_layers, uint32_t layer_count, const EventDa
                 continue;
             }
 
-            /* Check if mouse is inside Layer RectClip (in MainWindow (0,0) coordinates) */
-            if ((p_layer->RectClip.W > 0U) && (p_layer->RectClip.H > 0U)) {
-                if ((p_event->MouseX < p_layer->RectClip.OffsetX) ||
-                    (p_event->MouseX >= (p_layer->RectClip.OffsetX + (int32_t)p_layer->RectClip.W)) ||
-                    (p_event->MouseY < p_layer->RectClip.OffsetY) ||
-                    (p_event->MouseY >= (p_layer->RectClip.OffsetY + (int32_t)p_layer->RectClip.H))) {
-                    /* Mouse is outside this layer's RectClip */
-                    continue;
-                }
+            /* Map MainWindow mouse coordinates to Layer (0,0) local space (including RectClip rotation) */
+            MapWindowToLayerCoords(p_layer, p_event->MouseX, p_event->MouseY, &local_x, &local_y, &in_clip);
+            if (0U == in_clip) {
+                /* Mouse is outside this layer's RectClip */
+                continue;
             }
-
-            /* Convert MainWindow mouse position to Layer (0,0) local coordinates */
-            local_x = p_event->MouseX - p_layer->RectClip.OffsetX - p_layer->ScrollX;
-            local_y = p_event->MouseY - p_layer->RectClip.OffsetY - p_layer->ScrollY;
 
             /* Iterate components in reverse order (top-most first) */
             for (comp_idx = (int32_t)p_layer->CompCount - 1; comp_idx >= 0; comp_idx--) {
@@ -184,8 +238,9 @@ Err_t EventHandleDragDrop(Layer_t *p_layers, uint32_t layer_count, const EventDa
                 if (0U != is_hit) {
                     g_DragDropCtx.IsDragging    = 1U;
                     g_DragDropCtx.p_DraggedComp = p_comp;
-                    g_DragDropCtx.GrabOffsetX   = p_event->MouseX - p_comp->Type.Rect.Dim.OffsetX;
-                    g_DragDropCtx.GrabOffsetY   = p_event->MouseY - p_comp->Type.Rect.Dim.OffsetY;
+                    g_DragDropCtx.GrabOffsetX   = local_x - p_comp->Type.Rect.Dim.OffsetX;
+                    g_DragDropCtx.GrabOffsetY   = local_y - p_comp->Type.Rect.Dim.OffsetY;
+                    gp_DraggedLayer             = p_layer;
 
                     drag_ev      = *p_event;
                     drag_ev.Type = EVENT_TYPE_DRAG_START;
@@ -202,8 +257,23 @@ Err_t EventHandleDragDrop(Layer_t *p_layers, uint32_t layer_count, const EventDa
         /* Assert dragged component pointer is valid when IsDragging is active */
         ASSERT_NOT_EQUAL(NULL, g_DragDropCtx.p_DraggedComp);
         {
-            int32_t new_x = p_event->MouseX - g_DragDropCtx.GrabOffsetX;
-            int32_t new_y = p_event->MouseY - g_DragDropCtx.GrabOffsetY;
+            int32_t local_x = p_event->MouseX;
+            int32_t local_y = p_event->MouseY;
+            uint8_t in_clip = 1U;
+            int32_t new_x;
+            int32_t new_y;
+
+            if (NULL != gp_DraggedLayer) {
+                MapWindowToLayerCoords(gp_DraggedLayer,
+                                       p_event->MouseX,
+                                       p_event->MouseY,
+                                       &local_x,
+                                       &local_y,
+                                       &in_clip);
+            }
+
+            new_x = local_x - g_DragDropCtx.GrabOffsetX;
+            new_y = local_y - g_DragDropCtx.GrabOffsetY;
 
             /* Acquire UI lock briefly while mutating component coordinates */
             (void)WindowLockUI();
@@ -234,6 +304,7 @@ Err_t EventHandleDragDrop(Layer_t *p_layers, uint32_t layer_count, const EventDa
         g_DragDropCtx.IsDragging       = 0U;
         g_DragDropCtx.p_DraggedComp    = NULL;
         g_DragDropCtx.p_DropTargetComp = NULL;
+        gp_DraggedLayer                = NULL;
     } else {
         /* No drag-and-drop action required for other event types */
     }
@@ -247,7 +318,7 @@ Err_t EventHandleDragDrop(Layer_t *p_layers, uint32_t layer_count, const EventDa
  * @param layer_count[in] Number of layers
  * @param p_event[in] Incoming event to dispatch
  * @return APP_SUCCESS on success, or error status
- * @note Converts MainWindow mouse coords into Layer (0,0) coords using Layer RectClip
+ * @note Converts MainWindow mouse coords into Layer (0,0) coords using Layer RectClip and Rotation
  */
 Err_t EventDispatchToLayers(Layer_t *p_layers, uint32_t layer_count, const EventData_t *p_event) {
     uint32_t layer_idx;
@@ -266,10 +337,10 @@ Err_t EventDispatchToLayers(Layer_t *p_layers, uint32_t layer_count, const Event
 
     /* Iterate through all layers to dispatch event to component listeners */
     for (layer_idx = 0U; layer_idx < layer_count; layer_idx++) {
-        Layer_t *p_layer = &p_layers[layer_idx];
+        Layer_t *p_layer      = &p_layers[layer_idx];
         uint8_t  in_rect_clip = 1U;
-        int32_t  local_x;
-        int32_t  local_y;
+        int32_t  local_x      = 0;
+        int32_t  local_y      = 0;
 
         /* Skip hidden layers */
         if (0U == p_layer->IsVisible) {
@@ -277,15 +348,8 @@ Err_t EventDispatchToLayers(Layer_t *p_layers, uint32_t layer_count, const Event
             continue;
         }
 
-        /* Check if mouse cursor is inside Layer RectClip (in MainWindow (0,0) coords) */
-        if ((p_layer->RectClip.W > 0U) && (p_layer->RectClip.H > 0U)) {
-            if ((p_event->MouseX < p_layer->RectClip.OffsetX) ||
-                (p_event->MouseX >= (p_layer->RectClip.OffsetX + (int32_t)p_layer->RectClip.W)) ||
-                (p_event->MouseY < p_layer->RectClip.OffsetY) ||
-                (p_event->MouseY >= (p_layer->RectClip.OffsetY + (int32_t)p_layer->RectClip.H))) {
-                in_rect_clip = 0U;
-            }
-        }
+        /* Map MainWindow mouse position to Layer (0,0) local coordinates and check RectClip */
+        MapWindowToLayerCoords(p_layer, p_event->MouseX, p_event->MouseY, &local_x, &local_y, &in_rect_clip);
 
         /* Scroll entire layer if layer is marked IsScrollable and mouse wheel is inside RectClip */
         if ((EVENT_TYPE_MOUSE_WHEEL == p_event->Type) &&
@@ -296,10 +360,6 @@ Err_t EventDispatchToLayers(Layer_t *p_layers, uint32_t layer_count, const Event
             (void)WindowUnlockUI();
             (void)WindowQueuePush(WIN_ACTION_UPDATE_ALL, NULL);
         }
-
-        /* Convert MainWindow mouse position to Layer (0,0) local coordinates */
-        local_x = p_event->MouseX - p_layer->RectClip.OffsetX - p_layer->ScrollX;
-        local_y = p_event->MouseY - p_layer->RectClip.OffsetY - p_layer->ScrollY;
 
         /* Iterate through all components in the current layer */
         for (comp_idx = 0U; comp_idx < p_layer->CompCount; comp_idx++) {

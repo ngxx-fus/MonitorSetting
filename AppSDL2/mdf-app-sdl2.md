@@ -17,7 +17,7 @@
                     |           |           |   |---H
                     |           |           |   |---OffsetX (row)
                     |           |           |   |---OffsetY (col)
-                    |           |           |   |---Rotation (0-180)
+                    |           |           |   |---Rotation (0-360)
                     |           |           |---boder:
                     |           |               |----Size
                     |           |               |----Color: AARRGGBB
@@ -42,10 +42,12 @@
                     |---Comp0:
                     ...
             ```
-        * Draw text/line/circle/rect(w-radius) | With filled or not
+        * Draw text/line/circle/rect(w-radius) | With filled or not:
+            + Text supports multi-line newline (`\n`), word wrapping (`IsWrap` within `Dim.W`), horizontal alignment (`TEXT_ALIGN_LEFT`, `TEXT_ALIGN_CENTER`, `TEXT_ALIGN_RIGHT`), and vertical alignment (`TEXT_VALIGN_TOP`, `TEXT_VALIGN_MIDDLE`, `TEXT_VALIGN_BOTTOM`).
+            + Supports `Dim.Rotation` (`0-360` degrees clockwise around center) for components and layer `RectClip` viewports via offscreen target textures (`SDL_RenderCopyEx`) and inverse-rotated mouse hit-testing.
         * Able to make scrollable layer (a layer can attach a component like a table):
             + Components inside a layer are positioned relative to `(0, 0)` of that layer.
-            + Layer `RectClip` (viewport) is positioned relative to `(0, 0)` of `MainWindow`.
+            + Layer `RectClip` (viewport) is positioned relative to `(0, 0)` of `MainWindow` and supports `Rotation` (`0-360` degrees).
         * Able to update all components
         * Able to hide/show/adjust-szie of the main window (mode: maximize, floating)
         * Able to receive user custome signal

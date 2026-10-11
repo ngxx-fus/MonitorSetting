@@ -21,6 +21,10 @@
 
 #define DEMO_WIN_WIDTH                  (800U)
 #define DEMO_WIN_HEIGHT                 (520U)
+#define DEMO_LAYER_COUNT                (3U)
+#define DEMO_MAX_COMPS_PER_LAYER        (6U)
+#define DEMO_CARD_COUNT                 (3U)
+#define DEMO_MAX_CARD_EVENTS            (4U)
 
 /* definitions ************************************************************************************
  **************************************************************************************************/
@@ -56,6 +60,19 @@ static MiscThreadCtx_t g_MiscCtx = {
 
 static char g_StatusMsgBuf[80] = "Background Tick: 0 | Drag cards, click buttons, or scroll";
 
+/* 2D array of components: [3 layers][up to 6 components per layer] */
+static Comp_t        g_LayerComps[DEMO_LAYER_COUNT][DEMO_MAX_COMPS_PER_LAYER];
+
+/* Child text extension arrays (p_ExtComps) for the 3 draggable monitor cards */
+static CompTextCfg_t g_CardTitle[DEMO_CARD_COUNT];
+static ExtComp_t     g_CardExtItem[DEMO_CARD_COUNT];
+static ExtCompList_t g_CardExtList[DEMO_CARD_COUNT];
+
+/* Event listener arrays for the 3 draggable cards and 2 action buttons */
+static CompEvent_t   g_CardEvent[DEMO_CARD_COUNT][DEMO_MAX_CARD_EVENTS];
+static CompEvent_t   g_BtnModeEvent;
+static CompEvent_t   g_BtnYesNoEvent;
+
 /* exported functions *****************************************************************************
  **************************************************************************************************/
 
@@ -73,6 +90,9 @@ static void OnMonitorEvent(Comp_t *p_comp, const EventData_t *p_event);
 static void OnUserSignalEvent(Comp_t *p_comp, const EventData_t *p_event);
 static void OnBtnModeClick(Comp_t *p_comp, const EventData_t *p_event);
 static void OnBtnYesNoClick(Comp_t *p_comp, const EventData_t *p_event);
+static void InitDemoLayers(void);
+static void InitDemoComponents(void);
+static void BindDemoEvents(void);
 static int  MiscBackgroundThreadEntry(void *p_arg);
 
 /* function implementations ***********************************************************************
@@ -208,6 +228,181 @@ static void OnBtnYesNoClick(Comp_t *p_comp, const EventData_t *p_event) {
     return;
 }
 
+/* Step 1: Initialize all 3 layers in g_MainWindow and attach their component arrays
+ * @note Layer 2 is configured with a scrollable RectClip relative to MainWindow (0, 0)
+ */
+static void InitDemoLayers(void) {
+    /* Layer 2 viewport (RectClip) is positioned relative to (0, 0) of MainWindow */
+    CompDim_t layer1_clip = { .W = 700U, .H = 200U, .OffsetX = 50, .OffsetY = 100, .Rotation = 0 };
+    CompDim_t layer2_clip = { .W = 700U, .H = 180U, .OffsetX = 50, .OffsetY = 280, .Rotation = 0U };
+
+    /* Layer 0: Base background panel, header line, status indicator, and 2 action buttons */
+    g_MainWindow.Layers[0].IsVisible = 1U;
+    g_MainWindow.Layers[0].CompCount = 6U;
+    g_MainWindow.Layers[0].p_Comps   = g_LayerComps[0];
+
+    /* Layer 1: Three draggable monitor selection cards */
+    g_MainWindow.Layers[1].IsVisible = 1U;
+    g_MainWindow.Layers[1].CompCount = DEMO_CARD_COUNT;
+    g_MainWindow.Layers[1].p_Comps   = g_LayerComps[1];
+    (void)LayerSetScrollable(&g_MainWindow.Layers[1], layer1_clip, 1U);
+
+    /* Layer 2: Scrollable viewport layer containing the MonitorTable component */
+    g_MainWindow.Layers[2].IsVisible = 1U;
+    g_MainWindow.Layers[2].CompCount = 1U;
+    g_MainWindow.Layers[2].p_Comps   = g_LayerComps[2];
+    (void)LayerSetScrollable(&g_MainWindow.Layers[2], layer2_clip, 1U);
+
+    /* Return after configuring all layers */
+    return;
+}
+
+/* Step 2: Initialize all components inside Layer 0, Layer 1, and Layer 2
+ * @note Uses g_LayerComps[layer_idx][comp_idx] and attaches child text extensions for cards
+ */
+static void InitDemoComponents(void) {
+    uint32_t card_idx;
+
+    /* Layer 0 dimensions and colors */
+    CompDim_t panel_dim   = { .W = 740U, .H = 460U, .OffsetX = 30,  .OffsetY = 30, .Rotation = 0U };
+    CompDim_t circle_dim  = { .W = 24U,  .H = 24U,  .OffsetX = 50,  .OffsetY = 48, .Rotation = 0U };
+    CompDim_t btn_mod_dim = { .W = 115U, .H = 28U,  .OffsetX = 505, .OffsetY = 46, .Rotation = 0U };
+    CompDim_t btn_yn_dim  = { .W = 115U, .H = 28U,  .OffsetX = 630, .OffsetY = 46, .Rotation = 0U };
+    Color_t   panel_col   = { .w = 0xFF232936U };
+    Color_t   border_col  = { .w = 0xFF4A5568U };
+    Color_t   line_col    = { .w = 0xFF00B4D8U };
+    Color_t   circle_col  = { .w = 0xFF00E676U };
+    Color_t   text_col    = { .w = 0xFFE2E8F0U };
+    Color_t   btn_col     = { .w = 0xFF2D3748U };
+    Color_t   white_col   = { .w = 0xFFFFFFFFU };
+
+    /* Layer 1 card lookup tables for labels, titles, and colors */
+    const_str_t card_labels[DEMO_CARD_COUNT] = {
+        "MonitorCard_1",
+        "MonitorCard_2",
+        "MonitorCard_3"
+    };
+    const_str_t card_titles[DEMO_CARD_COUNT] = {
+        "[Monitor 1: HDMI-1\n1920x1080]",
+        "[Monitor 2: DP-1\n2560x1440]",
+        "[Monitor 3: USB-C\n3840x2160]"
+    };
+    Color_t card_colors[DEMO_CARD_COUNT] = {
+        { .w = 0xDD1E4E8CU },
+        { .w = 0xDD2B6CB0U },
+        { .w = 0xDD2C7A7BU }
+    };
+
+    /* Layer 2 table dimensions (positioned at (0, 0) of Layer 2) and color */
+    CompDim_t table_dim = { .W = 700U, .H = 300U, .OffsetX = 0, .OffsetY = 0, .Rotation = 0U };
+    Color_t   table_col = { .w = 0xFF1A202CU };
+
+    /* --- Layer 0 Components --- */
+    /* Comp [0][0]: Main container rounded rectangle */
+    (void)CompInitRect(&g_LayerComps[0][0], "MainPanel", panel_dim, panel_col, 10U, 1U);
+    (void)CompSetBorder(&g_LayerComps[0][0], 1U, border_col);
+
+    /* Comp [0][1]: Header separator line */
+    (void)CompInitLine(&g_LayerComps[0][1], "HeaderLine", 50, 82, 750, 82, line_col, 2U);
+
+    /* Comp [0][2]: Background thread pulsing status circle */
+    (void)CompInitCircle(&g_LayerComps[0][2], "StatusCircle", circle_dim, circle_col, 10U, 1U);
+    (void)CompSetBorder(&g_LayerComps[0][2], 1U, text_col);
+
+    /* Comp [0][3]: Status header text */
+    (void)CompInitText(&g_LayerComps[0][3], "HeaderText", 82, 56, g_StatusMsgBuf, text_col, 14U);
+
+    /* Comp [0][4]: Button to toggle Maximize / Floating mode (event bound in BindDemoEvents) */
+    (void)CompInitButton(&g_LayerComps[0][4], "Max/Float", btn_mod_dim, btn_col, NULL, NULL);
+
+    /* Comp [0][5]: Button to open Quick Yes/No Dialog (event bound in BindDemoEvents) */
+    (void)CompInitButton(&g_LayerComps[0][5], "Apply (Y/N)", btn_yn_dim, btn_col, NULL, NULL);
+
+    /* --- Layer 1 Components (3 Draggable Monitor Cards relative to Layer 1 (0, 0)) --- */
+    for (card_idx = 0U; card_idx < DEMO_CARD_COUNT; card_idx++) {
+        CompDim_t card_dim = {
+            .W        = 220U,
+            .H        = 120U,
+            .OffsetX  = 10 + ((int32_t)card_idx * 230),
+            .OffsetY  = 40,
+            .Rotation = 0U
+        };
+
+        /* Initialize card rectangle and mark as draggable button */
+        (void)CompInitRect(&g_LayerComps[1][card_idx],
+                           card_labels[card_idx],
+                           card_dim,
+                           card_colors[card_idx],
+                           8U,
+                           1U);
+        (void)CompSetBorder(&g_LayerComps[1][card_idx], 1U, white_col);
+        g_LayerComps[1][card_idx].Class       = COMP_CLASS_BUTTON;
+        g_LayerComps[1][card_idx].IsDraggable = 1U;
+
+        /* Attach centered and wrapped child text label to card via p_ExtComps */
+        g_CardTitle[card_idx].Color    = white_col;
+        g_CardTitle[card_idx].Dim      = card_dim;
+        g_CardTitle[card_idx].TextStr  = card_titles[card_idx];
+        g_CardTitle[card_idx].FontSize = 14U;
+        (void)CompSetTextAlign(&g_CardTitle[card_idx], TEXT_ALIGN_CENTER, TEXT_VALIGN_MIDDLE, 1U);
+
+        g_CardExtItem[card_idx].CastType       = COMP_CAST_TEXT;
+        g_CardExtItem[card_idx].CompPtr.p_Text = &g_CardTitle[card_idx];
+        g_CardExtList[card_idx].Count          = 1U;
+        g_CardExtList[card_idx].p_ExtComps     = &g_CardExtItem[card_idx];
+        g_LayerComps[1][card_idx].p_ExtComps   = &g_CardExtList[card_idx];
+    }
+
+    /* --- Layer 2 Component (Scrollable Table at (0, 0) of Layer 2) --- */
+    (void)CompInitTable(&g_LayerComps[2][0], "MonitorTable", table_dim, table_col, 10U, 5U, 1U);
+    (void)CompSetBorder(&g_LayerComps[2][0], 1U, line_col);
+
+    /* Return after initializing all components */
+    return;
+}
+
+/* Step 3: Attach event listeners to buttons in Layer 0 and draggable cards in Layer 1
+ * @note Binds click, drag-start, drop, monitor, and user-signal callbacks
+ */
+static void BindDemoEvents(void) {
+    uint32_t card_idx;
+
+    /* Bind click callback to Layer 0 Comp 4 ("Max/Float" button) */
+    g_BtnModeEvent.Listener.Type        = EVENT_TYPE_MOUSE_DOWN;
+    g_BtnModeEvent.Listener.p_CallBack  = OnBtnModeClick;
+    g_LayerComps[0][4].Listeners.Count    = 1U;
+    g_LayerComps[0][4].Listeners.p_Events = &g_BtnModeEvent;
+
+    /* Bind click callback to Layer 0 Comp 5 ("Apply (Y/N)" button) */
+    g_BtnYesNoEvent.Listener.Type       = EVENT_TYPE_MOUSE_DOWN;
+    g_BtnYesNoEvent.Listener.p_CallBack = OnBtnYesNoClick;
+    g_LayerComps[0][5].Listeners.Count    = 1U;
+    g_LayerComps[0][5].Listeners.p_Events = &g_BtnYesNoEvent;
+
+    /* Bind drag/drop and system listeners to each card in Layer 1 */
+    for (card_idx = 0U; card_idx < DEMO_CARD_COUNT; card_idx++) {
+        g_CardEvent[card_idx][0].Listener.Type       = EVENT_TYPE_DRAG_START;
+        g_CardEvent[card_idx][0].Listener.p_CallBack = OnCardDragStart;
+        g_CardEvent[card_idx][1].Listener.Type       = EVENT_TYPE_DROP;
+        g_CardEvent[card_idx][1].Listener.p_CallBack = OnCardDrop;
+
+        /* Card 0 also listens for periodic EVENT_TYPE_MONITOR and custom EVENT_TYPE_USER_SIGNAL */
+        if (0U == card_idx) {
+            g_CardEvent[card_idx][2].Listener.Type       = EVENT_TYPE_MONITOR;
+            g_CardEvent[card_idx][2].Listener.p_CallBack = OnMonitorEvent;
+            g_CardEvent[card_idx][3].Listener.Type       = EVENT_TYPE_USER_SIGNAL;
+            g_CardEvent[card_idx][3].Listener.p_CallBack = OnUserSignalEvent;
+            g_LayerComps[1][card_idx].Listeners.Count    = 4U;
+        } else {
+            g_LayerComps[1][card_idx].Listeners.Count    = 2U;
+        }
+        g_LayerComps[1][card_idx].Listeners.p_Events = g_CardEvent[card_idx];
+    }
+
+    /* Return after binding all component event listeners */
+    return;
+}
+
 /* Background housekeeping thread that sleeps on condition variable and pushes UI update actions
  * @param p_arg[in] Pointer to MiscThreadCtx_t
  * @return Thread exit status (0)
@@ -280,45 +475,18 @@ static int MiscBackgroundThreadEntry(void *p_arg) {
     return 0;
 }
 
-/* Application entry point setting up single-instance guard, layers, components, and threads
+/* Application entry point setting up single-instance guard, layers, components, events, and threads
  * @param argc[in] Argument count
  * @param argv[in] Argument vector
  * @return 0 on clean exit, non-zero on initialization failure
  * @note Press ESC or close the window to exit cleanly
  */
 int main(int argc, char *argv[]) {
-    Err_t          err;
-    uint8_t        is_primary = 1U;
-    uint8_t        quit_flag  = 0U;
-    SDL_Thread    *p_misc_thread;
-    int            misc_thread_status = 0;
-
-    /* Layer 0 components: Background panel, divider line, status circle, status text, 2 buttons */
-    Comp_t         layer0_comps[6];
-    /* Layer 1 components: Two draggable monitor selection cards */
-    Comp_t         layer1_comps[3];
-    /* Layer 2 components: Scrollable layer containing a table component */
-    Comp_t         layer2_comps[1];
-
-    /* Child text extensions (p_ExtComps) for the two draggable monitor cards */
-    CompTextCfg_t  card0_title_cfg;
-    ExtComp_t      card0_ext_item;
-    ExtCompList_t  card0_ext_list;
-
-    CompTextCfg_t  card1_title_cfg;
-    ExtComp_t      card1_ext_item;
-    ExtCompList_t  card1_ext_list;
-
-    CompTextCfg_t  card2_title_cfg;
-    ExtComp_t      card2_ext_item;
-    ExtCompList_t  card2_ext_list;
-
-    /* Event listener slots for cards and buttons */
-    CompEvent_t    card0_events[4];
-    CompEvent_t    card1_events[2];
-    CompEvent_t    card2_events[2];
-    CompEvent_t    btn_mode_event;
-    CompEvent_t    btn_yesno_event;
+    Err_t       err;
+    uint8_t     is_primary         = 1U;
+    uint8_t     quit_flag          = 0U;
+    SDL_Thread *p_misc_thread      = NULL;
+    int         misc_thread_status = 0;
 
     PARAMETTER_NOT_USED(argc);
     PARAMETTER_NOT_USED(argv);
@@ -334,191 +502,31 @@ int main(int argc, char *argv[]) {
     err = WindowInit("MonitorSelection - AppSDL2 Demo (ESC to Quit)", DEMO_WIN_WIDTH, DEMO_WIN_HEIGHT);
     ASSERT_EQUAL(APP_SUCCESS, err);
 
-    /* 2. Configure Layer 0 (Base UI elements + Action Buttons) */
-    {
-        CompDim_t panel_dim   = { .W = 740U, .H = 460U, .OffsetX = 30,  .OffsetY = 30, .Rotation = 0U };
-        CompDim_t circle_dim  = { .W = 24U,  .H = 24U,  .OffsetX = 50,  .OffsetY = 48, .Rotation = 0U };
-        CompDim_t btn_mod_dim = { .W = 115U, .H = 28U,  .OffsetX = 505, .OffsetY = 46, .Rotation = 0U };
-        CompDim_t btn_yn_dim  = { .W = 115U, .H = 28U,  .OffsetX = 630, .OffsetY = 46, .Rotation = 0U };
-        Color_t   panel_col   = { .w = 0xFF232936U };
-        Color_t   border_col  = { .w = 0xFF4A5568U };
-        Color_t   line_col    = { .w = 0xFF00B4D8U };
-        Color_t   circle_col  = { .w = 0xFF00E676U };
-        Color_t   text_col    = { .w = 0xFFE2E8F0U };
-        Color_t   btn_col     = { .w = 0xFF2D3748U };
+    /* 2. Initialize Layers -> Initialize Components -> Bind Events */
+    InitDemoLayers();
+    InitDemoComponents();
+    BindDemoEvents();
 
-        /* Comp 0: Main container rounded rectangle */
-        (void)CompInitRect(&layer0_comps[0], "MainPanel", panel_dim, panel_col, 10U, 1U);
-        (void)CompSetBorder(&layer0_comps[0], 1U, border_col);
-
-        /* Comp 1: Header separator line */
-        (void)CompInitLine(&layer0_comps[1], "HeaderLine", 50, 82, 750, 82, line_col, 2U);
-
-        /* Comp 2: Background thread pulsing status circle */
-        (void)CompInitCircle(&layer0_comps[2], "StatusCircle", circle_dim, circle_col, 10U, 1U);
-        (void)CompSetBorder(&layer0_comps[2], 1U, text_col);
-
-        /* Comp 3: Status header text */
-        (void)CompInitText(&layer0_comps[3], "HeaderText", 82, 56, g_StatusMsgBuf, text_col, 14U);
-
-        /* Comp 4: Button to toggle Maximize / Floating mode */
-        (void)CompInitButton(&layer0_comps[4], "Max/Float", btn_mod_dim, btn_col, &btn_mode_event, OnBtnModeClick);
-
-        /* Comp 5: Button to open Quick Yes/No Dialog */
-        (void)CompInitButton(&layer0_comps[5], "Apply (Y/N)", btn_yn_dim, btn_col, &btn_yesno_event, OnBtnYesNoClick);
-
-        g_MainWindow.Layers[0].IsVisible = 1U;
-        g_MainWindow.Layers[0].CompCount = 6U;
-        g_MainWindow.Layers[0].p_Comps   = layer0_comps;
-    }
-
-    /* 3. Configure Layer 1 (Draggable Monitor Cards with p_ExtComps and Event Listeners) */
-    {
-        CompDim_t card0_dim = { .W = 220U, .H = 120U, .OffsetX = 50,  .OffsetY = 110, .Rotation = 0U };
-        CompDim_t card1_dim = { .W = 220U, .H = 120U, .OffsetX = 290, .OffsetY = 110, .Rotation = 0U };
-        CompDim_t card2_dim = { .W = 220U, .H = 120U, .OffsetX = 530, .OffsetY = 110, .Rotation = 0U };
-        Color_t   card0_col = { .w = 0xDD1E4E8CU };
-        Color_t   card1_col = { .w = 0xDD2B6CB0U };
-        Color_t   card2_col = { .w = 0xDD2C7A7BU };
-        Color_t   white_col = { .w = 0xFFFFFFFFU };
-
-        /* Draggable Card 0: Monitor 1 */
-        (void)CompInitRect(&layer1_comps[0], "MonitorCard_1", card0_dim, card0_col, 8U, 1U);
-        (void)CompSetBorder(&layer1_comps[0], 1U, white_col);
-        layer1_comps[0].Class       = COMP_CLASS_BUTTON;
-        layer1_comps[0].IsDraggable = 1U;
-
-        /* Attach child text label to Card 0 via p_ExtComps */
-        card0_title_cfg.Color        = white_col;
-        card0_title_cfg.Dim.OffsetX  = card0_dim.OffsetX + 16;
-        card0_title_cfg.Dim.OffsetY  = card0_dim.OffsetY + 52;
-        card0_title_cfg.Dim.W        = 190U;
-        card0_title_cfg.Dim.H        = 16U;
-        card0_title_cfg.Dim.Rotation = 0U;
-        card0_title_cfg.TextStr      = "[Monitor 1: HDMI-1 1920x1080]";
-        card0_title_cfg.FontSize     = 14U;
-
-        card0_ext_item.CastType       = COMP_CAST_TEXT;
-        card0_ext_item.CompPtr.p_Text = &card0_title_cfg;
-        card0_ext_list.Count          = 1U;
-        card0_ext_list.p_ExtComps     = &card0_ext_item;
-        layer1_comps[0].p_ExtComps    = &card0_ext_list;
-
-        /* Attach listeners to Card 0 (including custom user signal listener) */
-        card0_events[0].Listener.Type       = EVENT_TYPE_DRAG_START;
-        card0_events[0].Listener.p_CallBack = OnCardDragStart;
-        card0_events[1].Listener.Type       = EVENT_TYPE_DROP;
-        card0_events[1].Listener.p_CallBack = OnCardDrop;
-        card0_events[2].Listener.Type       = EVENT_TYPE_MONITOR;
-        card0_events[2].Listener.p_CallBack = OnMonitorEvent;
-        card0_events[3].Listener.Type       = EVENT_TYPE_USER_SIGNAL;
-        card0_events[3].Listener.p_CallBack = OnUserSignalEvent;
-        layer1_comps[0].Listeners.Count     = 4U;
-        layer1_comps[0].Listeners.p_Events  = card0_events;
-
-        /* Draggable Card 1: Monitor 2 */
-        (void)CompInitRect(&layer1_comps[1], "MonitorCard_2", card1_dim, card1_col, 8U, 1U);
-        (void)CompSetBorder(&layer1_comps[1], 1U, white_col);
-        layer1_comps[1].Class       = COMP_CLASS_BUTTON;
-        layer1_comps[1].IsDraggable = 1U;
-
-        /* Attach child text label to Card 1 via p_ExtComps */
-        card1_title_cfg.Color        = white_col;
-        card1_title_cfg.Dim.OffsetX  = card1_dim.OffsetX + 16;
-        card1_title_cfg.Dim.OffsetY  = card1_dim.OffsetY + 52;
-        card1_title_cfg.Dim.W        = 190U;
-        card1_title_cfg.Dim.H        = 16U;
-        card1_title_cfg.Dim.Rotation = 0U;
-        card1_title_cfg.TextStr      = "[Monitor 2: DP-1 2560x1440]";
-        card1_title_cfg.FontSize     = 14U;
-
-        card1_ext_item.CastType       = COMP_CAST_TEXT;
-        card1_ext_item.CompPtr.p_Text = &card1_title_cfg;
-        card1_ext_list.Count          = 1U;
-        card1_ext_list.p_ExtComps     = &card1_ext_item;
-        layer1_comps[1].p_ExtComps    = &card1_ext_list;
-
-        /* Attach listeners to Card 1 */
-        card1_events[0].Listener.Type       = EVENT_TYPE_DRAG_START;
-        card1_events[0].Listener.p_CallBack = OnCardDragStart;
-        card1_events[1].Listener.Type       = EVENT_TYPE_DROP;
-        card1_events[1].Listener.p_CallBack = OnCardDrop;
-        layer1_comps[1].Listeners.Count     = 2U;
-        layer1_comps[1].Listeners.p_Events  = card1_events;
-
-        /* Draggable Card 2: Monitor 3 */
-        (void)CompInitRect(&layer1_comps[2], "MonitorCard_3", card2_dim, card2_col, 8U, 1U);
-        (void)CompSetBorder(&layer1_comps[2], 1U, white_col);
-        layer1_comps[2].Class       = COMP_CLASS_BUTTON;
-        layer1_comps[2].IsDraggable = 1U;
-
-        /* Attach child text label to Card 2 via p_ExtComps */
-        card2_title_cfg.Color        = white_col;
-        card2_title_cfg.Dim.OffsetX  = card2_dim.OffsetX + 16;
-        card2_title_cfg.Dim.OffsetY  = card2_dim.OffsetY + 52;
-        card2_title_cfg.Dim.W        = 190U;
-        card2_title_cfg.Dim.H        = 16U;
-        card2_title_cfg.Dim.Rotation = 0U;
-        card2_title_cfg.TextStr      = "[Monitor 3: USB-C 3840x2160]";
-        card2_title_cfg.FontSize     = 14U;
-
-        card2_ext_item.CastType       = COMP_CAST_TEXT;
-        card2_ext_item.CompPtr.p_Text = &card2_title_cfg;
-        card2_ext_list.Count          = 1U;
-        card2_ext_list.p_ExtComps     = &card2_ext_item;
-        layer1_comps[2].p_ExtComps    = &card2_ext_list;
-
-        /* Attach listeners to Card 2 */
-        card2_events[0].Listener.Type       = EVENT_TYPE_DRAG_START;
-        card2_events[0].Listener.p_CallBack = OnCardDragStart;
-        card2_events[1].Listener.Type       = EVENT_TYPE_DROP;
-        card2_events[1].Listener.p_CallBack = OnCardDrop;
-        layer1_comps[2].Listeners.Count     = 2U;
-        layer1_comps[2].Listeners.p_Events  = card2_events;
-
-        g_MainWindow.Layers[1].IsVisible = 1U;
-        g_MainWindow.Layers[1].CompCount = 3U;
-        g_MainWindow.Layers[1].p_Comps   = layer1_comps;
-    }
-
-    /* 4. Configure Layer 2 (Scrollable Layer with attached Table component) */
-    {
-        /* Layer RectClip is positioned relative to (0, 0) of MainWindow */
-        CompDim_t rect_clip = { .W = 700U, .H = 180U, .OffsetX = 50, .OffsetY = 280, .Rotation = 0U };
-        /* Component inside Layer 2 is positioned relative to (0, 0) of Layer 2 */
-        CompDim_t table_dim = { .W = 700U, .H = 300U, .OffsetX = 0,  .OffsetY = 0,   .Rotation = 0U };
-        Color_t   table_col = { .w = 0xFF1A202CU };
-        Color_t   line_col  = { .w = 0xFF00B4D8U };
-
-        (void)CompInitTable(&layer2_comps[0], "MonitorTable", table_dim, table_col, 10U, 5U, 1U);
-        (void)CompSetBorder(&layer2_comps[0], 1U, line_col);
-
-        g_MainWindow.Layers[2].IsVisible = 1U;
-        g_MainWindow.Layers[2].CompCount = 1U;
-        g_MainWindow.Layers[2].p_Comps   = layer2_comps;
-        (void)LayerSetScrollable(&g_MainWindow.Layers[2], rect_clip, 1U);
-    }
-
-    /* 5. Perform initial full window render */
+    /* 3. Perform initial full window render */
     (void)WindowUpdateAll();
 
-    /* 6. Start Sub-Thread 1: Dedicated Event Listener Thread (sleeps until events arrive) */
+    /* 4. Start Sub-Thread 1: Dedicated Event Listener Thread (sleeps until events arrive) */
     err = EventListenerThreadStart();
     ASSERT_EQUAL(APP_SUCCESS, err);
 
-    /* 7. Start Sub-Thread 2: Miscellaneous Background Thread with sleep/wakeup condition */
+    /* 5. Start Sub-Thread 2: Miscellaneous Background Thread with sleep/wakeup condition */
     g_MiscCtx.IsRunning      = 1U;
     g_MiscCtx.p_Mutex        = SDL_CreateMutex();
     g_MiscCtx.p_Cond         = SDL_CreateCond();
-    g_MiscCtx.p_StatusCircle = &layer0_comps[2];
-    g_MiscCtx.p_StatusText   = &layer0_comps[3];
+    g_MiscCtx.p_StatusCircle = &g_LayerComps[0][2];
+    g_MiscCtx.p_StatusText   = &g_LayerComps[0][3];
     g_MiscCtx.TickCount      = 0U;
     p_misc_thread = SDL_CreateThread(MiscBackgroundThreadEntry, "MiscBackgroundThread", &g_MiscCtx);
     ASSERT_NOT_EQUAL(NULL, p_misc_thread);
 
     APP_INFO("Main loop started. Running ./main again in another terminal will toggle this window.");
 
-    /* 8. Main Thread Loop: Sleep until woken by an OS event or a sub-thread queue wakeup */
+    /* 6. Main Thread Loop: Sleep until woken by an OS event or a sub-thread queue wakeup */
     while (0U == quit_flag) {
         /* Sleep until an OS SDL2 event or WindowWakeupMainThread signal arrives */
         (void)EventWaitOSOnMainThread(&quit_flag, 0U);
@@ -527,7 +535,7 @@ int main(int argc, char *argv[]) {
         (void)WindowQueueProcessAll();
     }
 
-    /* 9. Wake up and join MiscBackgroundThread cleanly */
+    /* 7. Wake up and join MiscBackgroundThread cleanly */
     if (NULL != g_MiscCtx.p_Mutex) {
         (void)SDL_LockMutex(g_MiscCtx.p_Mutex);
         g_MiscCtx.IsRunning = 0U;
