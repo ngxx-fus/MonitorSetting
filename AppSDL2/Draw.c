@@ -258,37 +258,39 @@ Err_t DrawRect(const CompRectCfg_t *p_rect) {
     }
     rad = (int16_t)p_rect->Radius;
 
-    /* Check whether rectangle should be filled or outlined */
-    if (0U != p_rect->IsFilled) {
-        /* Check if corner radius is applied */
-        if (rad > 0) {
-            /* Draw filled rounded rectangle */
-            (void)roundedBoxRGBA(p_ren, x1, y1, x2, y2, rad,
-                                 p_rect->Color.b.r, p_rect->Color.b.g,
-                                 p_rect->Color.b.b, p_rect->Color.b.a);
+    /* Check whether rectangle should be filled or outlined (skip if alpha == 0) */
+    if (p_rect->Color.b.a > 0U) {
+        if (0U != p_rect->IsFilled) {
+            /* Check if corner radius is applied */
+            if (rad > 0) {
+                /* Draw filled rounded rectangle */
+                (void)roundedBoxRGBA(p_ren, x1, y1, x2, y2, rad,
+                                     p_rect->Color.b.r, p_rect->Color.b.g,
+                                     p_rect->Color.b.b, p_rect->Color.b.a);
+            } else {
+                /* Draw filled sharp rectangle */
+                (void)boxRGBA(p_ren, x1, y1, x2, y2,
+                              p_rect->Color.b.r, p_rect->Color.b.g,
+                              p_rect->Color.b.b, p_rect->Color.b.a);
+            }
         } else {
-            /* Draw filled sharp rectangle */
-            (void)boxRGBA(p_ren, x1, y1, x2, y2,
-                          p_rect->Color.b.r, p_rect->Color.b.g,
-                          p_rect->Color.b.b, p_rect->Color.b.a);
-        }
-    } else {
-        /* Check if corner radius is applied for outline */
-        if (rad > 0) {
-            /* Draw outlined rounded rectangle */
-            (void)roundedRectangleRGBA(p_ren, x1, y1, x2, y2, rad,
-                                       p_rect->Color.b.r, p_rect->Color.b.g,
-                                       p_rect->Color.b.b, p_rect->Color.b.a);
-        } else {
-            /* Draw outlined sharp rectangle */
-            (void)rectangleRGBA(p_ren, x1, y1, x2, y2,
-                                p_rect->Color.b.r, p_rect->Color.b.g,
-                                p_rect->Color.b.b, p_rect->Color.b.a);
+            /* Check if corner radius is applied for outline */
+            if (rad > 0) {
+                /* Draw outlined rounded rectangle */
+                (void)roundedRectangleRGBA(p_ren, x1, y1, x2, y2, rad,
+                                           p_rect->Color.b.r, p_rect->Color.b.g,
+                                           p_rect->Color.b.b, p_rect->Color.b.a);
+            } else {
+                /* Draw outlined sharp rectangle */
+                (void)rectangleRGBA(p_ren, x1, y1, x2, y2,
+                                    p_rect->Color.b.r, p_rect->Color.b.g,
+                                    p_rect->Color.b.b, p_rect->Color.b.a);
+            }
         }
     }
 
-    /* Draw border outline if border size is greater than zero */
-    if (p_rect->Border.Size > 0U) {
+    /* Draw border outline if border size and border alpha are greater than zero */
+    if ((p_rect->Border.Size > 0U) && (p_rect->Border.Color.b.a > 0U)) {
         /* Check if rounded border is needed */
         if (rad > 0) {
             /* Render rounded border */
@@ -350,21 +352,23 @@ Err_t DrawCircle(const CompCircleCfg_t *p_circle) {
     cx  = (int16_t)(g_LayerOriginX + p_circle->Dim.OffsetX + (int32_t)rad);
     cy  = (int16_t)(g_LayerOriginY + p_circle->Dim.OffsetY + (int32_t)rad);
 
-    /* Render filled or outlined circle based on IsFilled flag */
-    if (0U != p_circle->IsFilled) {
-        /* Draw filled circle via SDL2_gfx */
-        (void)filledCircleRGBA(p_ren, cx, cy, rad,
-                               p_circle->Color.b.r, p_circle->Color.b.g,
-                               p_circle->Color.b.b, p_circle->Color.b.a);
-    } else {
-        /* Draw circle outline via SDL2_gfx */
-        (void)circleRGBA(p_ren, cx, cy, rad,
-                         p_circle->Color.b.r, p_circle->Color.b.g,
-                         p_circle->Color.b.b, p_circle->Color.b.a);
+    /* Render filled or outlined circle based on IsFilled flag when alpha > 0 */
+    if (p_circle->Color.b.a > 0U) {
+        if (0U != p_circle->IsFilled) {
+            /* Draw filled circle via SDL2_gfx */
+            (void)filledCircleRGBA(p_ren, cx, cy, rad,
+                                   p_circle->Color.b.r, p_circle->Color.b.g,
+                                   p_circle->Color.b.b, p_circle->Color.b.a);
+        } else {
+            /* Draw circle outline via SDL2_gfx */
+            (void)circleRGBA(p_ren, cx, cy, rad,
+                             p_circle->Color.b.r, p_circle->Color.b.g,
+                             p_circle->Color.b.b, p_circle->Color.b.a);
+        }
     }
 
-    /* Draw circle border if configured */
-    if (p_circle->Border.Size > 0U) {
+    /* Draw circle border if configured and alpha > 0 */
+    if ((p_circle->Border.Size > 0U) && (p_circle->Border.Color.b.a > 0U)) {
         /* Draw outer border ring */
         (void)circleRGBA(p_ren, cx, cy, rad,
                          p_circle->Border.Color.b.r, p_circle->Border.Color.b.g,
@@ -392,9 +396,9 @@ Err_t DrawLine(const CompLineCfg_t *p_line) {
     #endif /* (1U == PARAM_CHECK_EN) */
 
     p_ren = (SDL_Renderer *)g_MainWindow.p_SdlRenderer;
-    /* Check if SDL renderer is active */
-    if (NULL == p_ren) {
-        /* Return early if renderer is NULL */
+    /* Check if SDL renderer is active or if line alpha is zero */
+    if ((NULL == p_ren) || (0U == p_line->Color.b.a)) {
+        /* Return early if renderer is NULL or line is fully transparent */
         return APP_SUCCESS;
     }
 

@@ -13,6 +13,8 @@
 #include "./Event.h"
 #include <signal.h>
 #include <unistd.h>
+#include <X11/Xlib.h>
+#include <X11/Xutil.h>
 
 /* macros *****************************************************************************************
  **************************************************************************************************/
@@ -198,11 +200,33 @@ Err_t WindowInit(const_str_t title, uint32_t width, uint32_t height) {
     }
     #endif /* (1U == PARAM_CHECK_EN) */
 
+    /* Query X11 display for a 32-bit ARGB TrueColor visual so alpha=0 is transparent on compositors */
+    {
+        Display    *p_dpy = XOpenDisplay(NULL);
+        XVisualInfo vinfo;
+
+        if (NULL != p_dpy) {
+            if (0 != XMatchVisualInfo(p_dpy, DefaultScreen(p_dpy), 32, TrueColor, &vinfo)) {
+                char vis_buf[32];
+                (void)snprintf(vis_buf, sizeof(vis_buf), "0x%lx", (unsigned long)vinfo.visualid);
+                (void)setenv("SDL_VIDEO_X11_VISUALID", vis_buf, 1);
+                (void)SDL_SetHint("SDL_VIDEO_X11_VISUALID", vis_buf);
+            }
+            (void)XCloseDisplay(p_dpy);
+        }
+    }
+
+    /* Keep X11 compositor enabled so window alpha transparency is composited properly */
+    (void)SDL_SetHint("SDL_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR", "0");
+
     /* Initialize SDL2 video, events, and timer subsystems */
     if (0 != SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_EVENTS)) {
         APP_ERR("SDL_Init failed: %s", SDL_GetError());
         return APP_ERROR_INIT_FAILED;
     }
+
+    /* Request 8-bit alpha channel in GL framebuffer for transparent background rendering */
+    (void)SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE, 8);
 
     /* Initialize SDL_ttf subsystem if available */
     (void)TTF_Init();
@@ -210,13 +234,21 @@ Err_t WindowInit(const_str_t title, uint32_t width, uint32_t height) {
     /* Set X11 window type hint to dialog so tiling WMs (e.g. bspwm/i3) float the window */
     (void)SDL_SetHint("SDL_VIDEO_X11_NET_WM_WINDOW_TYPE", "_NET_WM_WINDOW_TYPE_DIALOG");
 
-    /* Create floating SDL2 main window (without SDL_WINDOW_RESIZABLE so tiling WMs float it) */
+    /* Create floating SDL2 main window (with OPENGL for 32-bit ARGB composited alpha support) */
     p_win = SDL_CreateWindow(title,
                              SDL_WINDOWPOS_CENTERED,
                              SDL_WINDOWPOS_CENTERED,
                              (int)width,
                              (int)height,
-                             SDL_WINDOW_SHOWN);
+                             SDL_WINDOW_SHOWN | SDL_WINDOW_OPENGL);
+    if (NULL == p_win) {
+        p_win = SDL_CreateWindow(title,
+                                 SDL_WINDOWPOS_CENTERED,
+                                 SDL_WINDOWPOS_CENTERED,
+                                 (int)width,
+                                 (int)height,
+                                 SDL_WINDOW_SHOWN);
+    }
     if (NULL == p_win) {
         APP_ERR("SDL_CreateWindow failed: %s", SDL_GetError());
         SDL_Quit();
@@ -240,6 +272,7 @@ Err_t WindowInit(const_str_t title, uint32_t width, uint32_t height) {
         SDL_Quit();
         return APP_ERROR_INIT_FAILED;
     }
+    (void)SDL_SetRenderDrawBlendMode(p_ren, SDL_BLENDMODE_BLEND);
 
     g_MainWindow.Title         = title;
     g_MainWindow.Width         = width;
@@ -587,9 +620,9 @@ Err_t WindowUpdateAll(void) {
     }
 
     p_ren = (SDL_Renderer *)g_MainWindow.p_SdlRenderer;
-    /* Clear background to dark slate before drawing layers */
+    /* Clear background to transparent (0, 0, 0, 0) before drawing layers */
     if (NULL != p_ren) {
-        (void)SDL_SetRenderDrawColor(p_ren, 24U, 28U, 36U, 255U);
+        (void)SDL_SetRenderDrawColor(p_ren, 0U, 0U, 0U, 0U);
         (void)SDL_RenderClear(p_ren);
     }
 

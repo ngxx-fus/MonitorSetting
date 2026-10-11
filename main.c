@@ -1511,10 +1511,16 @@ static void InitDemoComponents(void) {
                     if ((COMP_CAST_TEXT == p_comp->CastType) && (0U != p_cc->HasH) && (p_cc->H > 0U)) {
                         p_txt->Dim.H = p_cc->H;
                     }
+                    if ((COMP_CAST_TEXT != p_comp->CastType) && (0U != p_cc->HasExtTextColor)) {
+                        p_txt->Color.w = p_cc->ExtTextColor;
+                    }
                 }
 
-                /* Layer 1 card positions are driven by disp.yml PosX/PosY */
+                /* Layer 1 card positions and colors are driven dynamically by disp.yml & active state */
                 if (1U == l_idx) {
+                    if (0U != p_cc->HasRadius) {
+                        p_comp->Type.Rect.Radius = p_cc->Radius;
+                    }
                     continue;
                 }
 
@@ -1524,8 +1530,77 @@ static void InitDemoComponents(void) {
                 if ((0U != p_cc->HasOffsetX) && (0U != p_cc->HasOffsetY)) {
                     (void)CompSetPosition(p_comp, p_cc->OffsetX, p_cc->OffsetY);
                 }
-                if ((0U != p_cc->HasColor) && (COMP_CAST_TEXT == p_comp->CastType)) {
-                    p_comp->Type.Text.Color.w = p_cc->Color;
+
+                /* Apply Color, Border, Radius, IsFilled, Thickness, EndX/EndY, and W/H by CastType */
+                switch (p_comp->CastType) {
+                    case COMP_CAST_RECT:
+                        if (0U != p_cc->HasColor) {
+                            p_comp->Type.Rect.Color.w = p_cc->Color;
+                        }
+                        if (0U != p_cc->HasRadius) {
+                            p_comp->Type.Rect.Radius = p_cc->Radius;
+                        }
+                        if (0U != p_cc->HasFilled) {
+                            p_comp->Type.Rect.IsFilled = p_cc->IsFilled;
+                        }
+                        if ((0U != p_cc->HasW) && (p_cc->W > 0U)) {
+                            p_comp->Type.Rect.Dim.W = p_cc->W;
+                            if (NULL != p_txt) {
+                                p_txt->Dim.W = p_cc->W;
+                            }
+                        }
+                        if ((0U != p_cc->HasH) && (p_cc->H > 0U)) {
+                            p_comp->Type.Rect.Dim.H = p_cc->H;
+                            if (NULL != p_txt) {
+                                p_txt->Dim.H = p_cc->H;
+                            }
+                        }
+                        if (0U != p_cc->HasBorderSize) {
+                            p_comp->Type.Rect.Border.Size = p_cc->BorderSize;
+                        }
+                        if (0U != p_cc->HasBorderColor) {
+                            p_comp->Type.Rect.Border.Color.w = p_cc->BorderColor;
+                        }
+                        break;
+                    case COMP_CAST_CIRCLE:
+                        if (0U != p_cc->HasColor) {
+                            p_comp->Type.Circle.Color.w = p_cc->Color;
+                        }
+                        if (0U != p_cc->HasRadius) {
+                            p_comp->Type.Circle.Radius = p_cc->Radius;
+                        }
+                        if (0U != p_cc->HasFilled) {
+                            p_comp->Type.Circle.IsFilled = p_cc->IsFilled;
+                        }
+                        if (0U != p_cc->HasBorderSize) {
+                            p_comp->Type.Circle.Border.Size = p_cc->BorderSize;
+                        }
+                        if (0U != p_cc->HasBorderColor) {
+                            p_comp->Type.Circle.Border.Color.w = p_cc->BorderColor;
+                        }
+                        break;
+                    case COMP_CAST_LINE:
+                        if (0U != p_cc->HasColor) {
+                            p_comp->Type.Line.Color.w = p_cc->Color;
+                        }
+                        if (0U != p_cc->HasThickness) {
+                            p_comp->Type.Line.Thickness = p_cc->Thickness;
+                        }
+                        if (0U != p_cc->HasEndX) {
+                            p_comp->Type.Line.EndX = p_cc->EndX;
+                        }
+                        if (0U != p_cc->HasEndY) {
+                            p_comp->Type.Line.EndY = p_cc->EndY;
+                        }
+                        break;
+                    case COMP_CAST_TEXT:
+                        if (0U != p_cc->HasColor) {
+                            p_comp->Type.Text.Color.w = p_cc->Color;
+                        }
+                        break;
+                    default:
+                        /* Ignore other CastTypes */
+                        break;
                 }
             }
         }

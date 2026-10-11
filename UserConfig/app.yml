@@ -375,7 +375,7 @@ App:
                               - Font: "CodeNewRoman Nerd Font"
                               - FontSize: 12
                               - Format:
-                                  - Bold: 1
+                                  - Bold: 0
                                   - Italic: 0
                                   - Algin:
                                       - Vertical: "Center"
@@ -425,7 +425,7 @@ App:
                               - Font: "CodeNewRoman Nerd Font"
                               - FontSize: 12
                               - Format:
-                                  - Bold: 1
+                                  - Bold: 0
                                   - Italic: 0
                                   - Algin:
                                       - Vertical: "Center"
