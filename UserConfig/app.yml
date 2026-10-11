@@ -3,16 +3,17 @@
 # =============================================================================
 # HOW TO USE THIS FILE (RC / .zshrc Style Guide):
 #
-# 1. CAN I EDIT VALUES? (Duoc sua khong?)
+# 1. CAN I EDIT VALUES?
 #    - [EDITABLE: YES] -> PreferDispPath, SnapThresholdPx, MainWindow (Title,
-#                         W, H, IsVisible, Mode), Layer0 & Layer2 component
-#                         positions (OffsetX, OffsetY, Color, FontSize,
-#                         IsVisible - e.g. Comp3 HeaderText status bar!), and
-#                         ApplyCallBack (CmdNum, cmd0..cmd31) are loaded
-#                         dynamically at startup!
+#                         Color, W, H, IsVisible, Mode, Font, Format), Layer0,
+#                         Layer1 & Layer2 component properties (OffsetX,
+#                         OffsetY, W, H, Color, Font, FontSize, Format,
+#                         TextStr, TextStrFmt, IsVisible), and ApplyCallBack
+#                         (CmdNum, cmd0..cmd31) are loaded dynamically at
+#                         startup!
 #    - [NOTE]          -> Layer1 monitor card positions are loaded from disp.yml.
 #
-# 2. CAN I ADD NEW ITEMS? (Duoc them khong?)
+# 2. CAN I ADD NEW ITEMS?
 #    - [EXTENSIBLE: YES] -> Under 'ApplyCallBack:', you can freely add more
 #                           commands: cmd0, cmd1, cmd2, cmd3 ... up to cmd31
 #                           (max 32 commands, SYSCALL_MAX_APPLY_CMDS = 32).
@@ -41,40 +42,67 @@ App:
   - SnapThresholdPx: 25
 
   # ---------------------------------------------------------------------------
-  # Top-level SDL2 Main Window geometry, default Font & startup state
+  # Top-level SDL2 Main Window geometry, background Color, default Font & state
   # [EDITABLE: YES] [EXTENSIBLE: NO]
-  # Example:
-  #   - Title: "My Custom Monitor Manager"
-  #   - W: 800
-  #   - H: 540
-  #   - IsVisible: 1                        # 1 = Show window on start, 0 = Start hidden
-  #   - Mode: "FLOATING"                    # "FLOATING" | "MAXIMIZED"
-  #   - Font: "CodeNewRoman Nerd Font"      # Global default font family (via fc-match) or .ttf/.otf path
+  #
+  # VISUAL LAYOUT MAP (800x540 Window Layout):
+  # +-------------------------------------------------------------------------+ (0,0) -> (800,540)
+  # | MainWindow Background (MainWindow -> Color: 0xFF12161F)                 | <- Outer margin & bottom bar!
+  # |   +-----------------------------------------------------------------+   | (OffsetX:30, OffsetY:30, W:740, H:460)
+  # |   | Layer0 -> Comp0: "MainPanel" (Color: 0xFF232936, Radius: 10)    |   | <- Inner rounded container panel!
+  # |   |   [Comp2:Circle] [Comp3:HeaderText "Ready | ..."]               |   |
+  # |   |   -----------------------------------------------------------   |   | <- Comp1: "HeaderLine" (Y=82)
+  # |   |   +-----------------------------------+ +-------------------+   |   |
+  # |   |   | Layer0 -> Comp6: "CanvasPanelBg"  | | Layer2 (X:550,Y:95|   |   |
+  # |   |   | + Layer1 (X:40, Y:95, W:500,H:380)| |  W:210, H:380)    |   |   |
+  # |   |   |   [Layer1->Comp0: Card "HDMI-1"]  | |  Comp0:PropPanelBg|   |   |
+  # |   |   |   [Layer1->Comp1: Card "DP-2"]    | |  Comp1:PropTitle  |   |   |
+  # |   |   |   [Layer1->Comp2: Card "eDP-1"]   | |  Comp2..Comp11    |   |   |
+  # |   |   +-----------------------------------+ +-------------------+   |   |
+  # |   +-----------------------------------------------------------------+   | (MainPanel bottom = 30 + 460 = 490)
+  # |                                      [Comp4:Roll-back] [Comp5:Apply]    | <- Placed at Y=500 (in MainWindow bottom bar)
+  # +-------------------------------------------------------------------------+
+  #
+  # IMPORTANT BACKGROUND COLOR NOTES (0xAARRGGBB: AA = Alpha opacity, RRGGBB = RGB hex):
+  #   1. MainWindow -> Color (e.g. 0xFF12161F):
+  #      - Fills the ENTIRE 800x540 window (including the 30px outer perimeter
+  #        and the Y=490..540 bottom strip containing the Roll-back & Apply buttons).
+  #      - For an opaque dark outer background: set 0xFF12161F (Alpha = FF = opaque).
+  #      - For a transparent outer background: set 0x0012161F (Alpha = 00 = transparent).
+  #   2. Layer0 -> Comp0 ("MainPanel") -> Color (e.g. 0xFF232936):
+  #      - Fills the inner rounded container panel (OffsetX:30, OffsetY:30, W:740, H:460).
+  #      - If Roll-back & Apply are placed at OffsetY: 500 and you want MainPanel
+  #        to enclose both buttons inside its rounded border, increase Comp0 H from 460 to 502!
+  #      - For a fully see-through window, set Alpha to 00 on BOTH MainWindow -> Color
+  #        (0x0012161F) AND Layer0 -> Comp0 -> Color (0x00232936).
   # ---------------------------------------------------------------------------
   - MainWindow:
       - Title: "Monitor Selection"
-          - Format:
-            - Bold: 1               # 0 | 1
-            - Italic: 1             # 0 | 1
-            - Algin:
-                - Vertical: "Center" # Left | Right
-                - Horizona: "Center" # Left | Right
-      - W: 800
-      - H: 540
-      - IsVisible: 1
-      - Mode: "FLOATING"               # FLOATING | MAXIMIZED
-      - Font: "CodeNewRoman Nerd Font" # Global default font (any component can override with its own - Font:)
+      - Color: 0xFF12161F              # Full 800x540 window background color (0xFF12161F = opaque dark, 0x0012161F = transparent)
+      - Format:
+          - Bold: 1                    # Global default Bold (0 = Regular, 1 = Bold)
+          - Italic: 0                  # Global default Italic (0 = Normal, 1 = Italic)
+          - Algin:
+              - Vertical: "Center"     # "Top" | "Center" | "Bottom"
+              - Horizona: "Center"     # "Left" | "Center" | "Right"
+      - W: 800                         # Full window width in pixels
+      - H: 540                         # Full window height in pixels
+      - IsVisible: 1                   # 1 = Show window on startup, 0 = Start hidden
+      - Mode: "FLOATING"               # "FLOATING" | "MAXIMIZED"
+      - Font: "CodeNewRoman Nerd Font" # Global default font family (any Comp below can override with its own - Font:)
       # -----------------------------------------------------------------------
       # UI Layer & Component Hierarchy
-      # [EDITABLE: YES for OffsetX, OffsetY, Color, Font, FontSize, IsVisible]
+      # [EDITABLE: YES for OffsetX, OffsetY, W, H, Color, Font, FontSize, Format, TextStr, TextStrFmt, IsVisible]
       # [EXTENSIBLE: NO]
-      # Layer0 = Header & Status Bar (Comp2=StatusCircle, Comp3=HeaderText)
-      # Layer1 = Monitor Canvas | Layer2 = Right Property Panel (PROP)
       # -----------------------------------------------------------------------
       - Layers:
+          # ===================================================================
+          # LAYER 0: Main Container Panel, Header Status Bar, Roll-back/Apply Buttons, and Canvas Background
+          # All (OffsetX, OffsetY) coordinates in Layer0 are relative to MainWindow top-left (0, 0).
+          # ===================================================================
           - Layer0:
               - LayerId: 0
-              - IsVisible: 0
+              - IsVisible: 1
               - IsScrollable: 0
               - RectClip:
                   - W: 0
@@ -83,6 +111,12 @@ App:
                   - OffsetY: 0
                   - Rotation: 0
               - Comps:
+                  # -----------------------------------------------------------
+                  # Layer0 -> Comp0: Inner Rounded Container Panel ("MainPanel")
+                  # - Default geometry: OffsetX:30, OffsetY:30, W:740 (to X=770), H:460 (to Y=490).
+                  # - Tip: To enclose the Roll-back/Apply buttons (at Y=500) inside this panel,
+                  #   change H: 460 -> H: 502 (or set W:800, H:540, OffsetX:0, OffsetY:0 to fill the window).
+                  # -----------------------------------------------------------
                   - Comp0:
                       - Class: "CONTAINER"
                       - Label: "MainPanel"
@@ -90,18 +124,22 @@ App:
                       - IsDraggable: 0
                       - IsVisible: 1
                       - Type:
-                          - Color: 0x00232936
-                          - Radius: 10
-                          - IsFilled: 1
+                          - Color: 0xFF232936          # MainPanel background color (0xAARRGGBB)
+                          - Radius: 10                 # Corner radius in pixels (0 = sharp corners)
+                          - IsFilled: 1                # 1 = Filled rectangle, 0 = Outline only
                           - Dim:
-                              - W: 740
-                              - H: 460
-                              - OffsetX: 30
-                              - OffsetY: 30
+                              - W: 740                 # MainPanel width in pixels
+                              - H: 460                 # MainPanel height in pixels (set to 502 to enclose buttons at Y=500)
+                              - OffsetX: 30            # Left margin from window edge (px)
+                              - OffsetY: 30            # Top margin from window edge (px)
                               - Rotation: 0
                           - Border:
-                              - Size: 1
-                              - Color: 0x004A5568
+                              - Size: 1                # Border thickness in pixels (0 = no border)
+                              - Color: 0xFF4A5568      # MainPanel border color
+                  # -----------------------------------------------------------
+                  # Layer0 -> Comp1: Horizontal Header Separator Line ("HeaderLine")
+                  # - Drawn from (OffsetX, OffsetY) = (40, 82) to (EndX, EndY) = (760, 82)
+                  # -----------------------------------------------------------
                   - Comp1:
                       - Class: "CUSTOM"
                       - Label: "HeaderLine"
@@ -109,16 +147,20 @@ App:
                       - IsDraggable: 0
                       - IsVisible: 1
                       - Type:
-                          - Color: 0xFF00B4D8
-                          - Thickness: 2
-                          - EndX: 760
-                          - EndY: 82
+                          - Color: 0xFF00B4D8          # Cyan separator line color
+                          - Thickness: 2               # Line thickness in pixels
+                          - EndX: 760                  # Line end X coordinate
+                          - EndY: 82                   # Line end Y coordinate
                           - Dim:
                               - W: 720
                               - H: 0
-                              - OffsetX: 40
-                              - OffsetY: 82
+                              - OffsetX: 40            # Line start X coordinate
+                              - OffsetY: 82            # Line start Y coordinate
                               - Rotation: 0
+                  # -----------------------------------------------------------
+                  # Layer0 -> Comp2: Pulsing Status Indicator Circle ("StatusCircle")
+                  # - Alternates green/cyan in the top-left header bar via MiscBackgroundThread
+                  # -----------------------------------------------------------
                   - Comp2:
                       - Class: "CUSTOM"
                       - Label: "StatusCircle"
@@ -126,18 +168,22 @@ App:
                       - IsDraggable: 0
                       - IsVisible: 1
                       - Type:
-                          - Color: 0xFF00E676
-                          - Radius: 10
+                          - Color: 0xFF00E676          # Initial circle fill color
+                          - Radius: 10                 # Circle radius in pixels
                           - IsFilled: 1
                           - Dim:
                               - W: 24
                               - H: 24
-                              - OffsetX: 50
-                              - OffsetY: 48
+                              - OffsetX: 50            # Circle bounding-box X position
+                              - OffsetY: 48            # Circle bounding-box Y position
                               - Rotation: 0
                           - Border:
                               - Size: 1
                               - Color: 0xFFE2E8F0
+                  # -----------------------------------------------------------
+                  # Layer0 -> Comp3: Header Status Bar Text ("HeaderText")
+                  # - Displays live status messages ("Ready | ...", "Applied...", etc.)
+                  # -----------------------------------------------------------
                   - Comp3:
                       - Class: "LABEL"
                       - Label: "HeaderText"
@@ -145,9 +191,9 @@ App:
                       - IsDraggable: 0
                       - IsVisible: 1
                       - Type:
-                          - Color: 0xFFE2E8F0
+                          - Color: 0xFFE2E8F0          # Status bar text color
                           - TextStr: "Ready | Click or drag a monitor card to edit properties"
-                          - Font: "CodeNewRoman Nerd Font" # "" = inherit MainWindow.Font, or set custom font
+                          - Font: "CodeNewRoman Nerd Font"
                           - FontSize: 13
                           - Format:
                               - Bold: 1
@@ -157,11 +203,16 @@ App:
                                   - Horizona: "Left"       # "Left" | "Center" | "Right"
                           - IsWrap: 0
                           - Dim:
-                              - W: 668
-                              - H: 20
-                              - OffsetX: 82
-                              - OffsetY: 50
+                              - W: 668                 # Text alignment box width
+                              - H: 20                  # Text alignment box height
+                              - OffsetX: 82            # X position (to the right of StatusCircle)
+                              - OffsetY: 50            # Y position on Header bar
                               - Rotation: 0
+                  # -----------------------------------------------------------
+                  # Layer0 -> Comp4: "Roll-back" Button (Restore previous display snapshot)
+                  # - Type -> Dim controls the button rectangle position and size.
+                  # - ExtComps -> ExtComp0 controls the "Roll-back" label inside the button.
+                  # -----------------------------------------------------------
                   - Comp4:
                       - Class: "BUTTON"
                       - Label: "Roll-back"
@@ -169,14 +220,14 @@ App:
                       - IsDraggable: 0
                       - IsVisible: 1
                       - Type:
-                          - Color: 0xFF4A5568
+                          - Color: 0xFF4A5568          # Roll-back button background color
                           - Radius: 6
                           - IsFilled: 1
                           - Dim:
                               - W: 115
                               - H: 28
-                              - OffsetX: 525
-                              - OffsetY: 500
+                              - OffsetX: 525           # Roll-back button X position
+                              - OffsetY: 500           # Roll-back button Y position (46 = Header bar, 500 = Bottom bar)
                               - Rotation: 0
                           - Border:
                               - Size: 1
@@ -189,7 +240,7 @@ App:
                           - Count: 1
                           - ExtComp0:
                               - CastType: "TEXT"
-                              - Color: 0xFFFFFFFF
+                              - Color: 0xFFFFFFFF      # Roll-back button text color
                               - TextStr: "Roll-back"
                               - Font: "CodeNewRoman Nerd Font"
                               - FontSize: 13
@@ -206,6 +257,9 @@ App:
                                   - OffsetX: 525
                                   - OffsetY: 500
                                   - Rotation: 0
+                  # -----------------------------------------------------------
+                  # Layer0 -> Comp5: "Apply" Button (Apply xrandr config & save disp.yml)
+                  # -----------------------------------------------------------
                   - Comp5:
                       - Class: "BUTTON"
                       - Label: "Apply"
@@ -213,14 +267,14 @@ App:
                       - IsDraggable: 0
                       - IsVisible: 1
                       - Type:
-                          - Color: 0xFF2B6CB0
+                          - Color: 0xFF2B6CB0          # Apply button background color (blue)
                           - Radius: 6
                           - IsFilled: 1
                           - Dim:
                               - W: 115
                               - H: 28
-                              - OffsetX: 650
-                              - OffsetY: 500
+                              - OffsetX: 650           # Apply button X position
+                              - OffsetY: 500           # Apply button Y position (46 = Header bar, 500 = Bottom bar)
                               - Rotation: 0
                           - Border:
                               - Size: 1
@@ -233,7 +287,7 @@ App:
                           - Count: 1
                           - ExtComp0:
                               - CastType: "TEXT"
-                              - Color: 0xFFFFFFFF
+                              - Color: 0xFFFFFFFF      # Apply button text color
                               - TextStr: "Apply"
                               - Font: "CodeNewRoman Nerd Font"
                               - FontSize: 13
@@ -250,6 +304,11 @@ App:
                                   - OffsetX: 650
                                   - OffsetY: 500
                                   - Rotation: 0
+                  # -----------------------------------------------------------
+                  # Layer0 -> Comp6: Left Monitor Canvas Background Frame ("CanvasPanelBg")
+                  # - Located at (OffsetX:40, OffsetY:95, W:500, H:380), serving as the
+                  #   visual backdrop for Layer1 (the 3 draggable monitor cards).
+                  # -----------------------------------------------------------
                   - Comp6:
                       - Class: "CONTAINER"
                       - Label: "CanvasPanelBg"
@@ -257,7 +316,7 @@ App:
                       - IsDraggable: 0
                       - IsVisible: 1
                       - Type:
-                          - Color: 0xFF1A202C
+                          - Color: 0xFF1A202C          # Left Canvas background color
                           - Radius: 8
                           - IsFilled: 1
                           - Dim:
@@ -268,8 +327,17 @@ App:
                               - Rotation: 0
                           - Border:
                               - Size: 1
-                              - Color: 0xFF00B4D8
+                              - Color: 0xFF00B4D8      # Cyan border around the Canvas frame
 
+          # ===================================================================
+          # LAYER 1: Draggable Monitor Layout Canvas (Comp0, Comp1, Comp2)
+          # - RectClip (OffsetX:40, OffsetY:95, W:500, H:380) bounds the drag area
+          #   to match CanvasPanelBg (Layer0 -> Comp6).
+          # - Initial card positions are computed from disp.yml; each Comp is matched
+          #   to a physical monitor by its Label ("HDMI-1", "DP-2", "eDP-1") so you
+          #   can customize Radius, Font, FontSize, Format (Bold/Italic/Algin), and
+          #   TextStrFmt per monitor!
+          # ===================================================================
           - Layer1:
               - LayerId: 1
               - IsVisible: 1
@@ -281,6 +349,12 @@ App:
                   - OffsetY: 95
                   - Rotation: 0
               - Comps:
+                  # -----------------------------------------------------------
+                  # Layer1 -> Comp0: Monitor Card "HDMI-1" (auto-matched by Label!)
+                  # - Supports TextStrFmt placeholders:
+                  #   <Label>, <Primary>, <Res>, <W>, <H>, <Freq>, <PosX>, <PosY>, <State>
+                  # - Set Format -> Bold: 1 (bold) or Bold: 0 (regular)
+                  # -----------------------------------------------------------
                   - Comp0:
                       - Class: "BUTTON"
                       - Label: "HDMI-1"
@@ -321,7 +395,8 @@ App:
                           - ExtComp0:
                               - CastType: "TEXT"
                               - Color: 0xFFFFFFFF
-                              - TextStr: "HDMI-1 | 1920x1080@60\nPOS(0, 0)"
+                              # TextStrFmt placeholders: <Label>, <Primary>, <Res>, <W>, <H>, <Freq>, <PosX>, <PosY>, <State>
+                              - TextStrFmt: "<Label>\n<Res>@<Freq>\nPOS(<PosX>, <PosY>)"
                               - Font: "CodeNewRoman Nerd Font"
                               - FontSize: 12
                               - Format:
@@ -337,9 +412,12 @@ App:
                                   - OffsetX: 10
                                   - OffsetY: 25
                                   - Rotation: 0
+                  # -----------------------------------------------------------
+                  # Layer1 -> Comp1: Monitor Card "DP-2" (auto-matched by Label!)
+                  # -----------------------------------------------------------
                   - Comp1:
                       - Class: "BUTTON"
-                      - Label: "DP-1"
+                      - Label: "DP-2"
                       - CastType: "RECT"
                       - IsDraggable: 1
                       - IsVisible: 1
@@ -371,11 +449,11 @@ App:
                           - ExtComp0:
                               - CastType: "TEXT"
                               - Color: 0xFFFFFFFF
-                              - TextStr: "DP-1 | 2560x1440@60\nPOS(165, 0)"
+                              - TextStrFmt: "<Label>\n<Res>@<Freq>\nPOS(<PosX>, <PosY>)"
                               - Font: "CodeNewRoman Nerd Font"
                               - FontSize: 12
                               - Format:
-                                  - Bold: 1
+                                  - Bold: 0
                                   - Italic: 0
                                   - Algin:
                                       - Vertical: "Center"
@@ -387,9 +465,12 @@ App:
                                   - OffsetX: 175
                                   - OffsetY: 25
                                   - Rotation: 0
+                  # -----------------------------------------------------------
+                  # Layer1 -> Comp2: Monitor Card "eDP-1" (auto-matched by Label!)
+                  # -----------------------------------------------------------
                   - Comp2:
                       - Class: "BUTTON"
-                      - Label: "USB-C"
+                      - Label: "eDP-1"
                       - CastType: "RECT"
                       - IsDraggable: 1
                       - IsVisible: 1
@@ -421,11 +502,11 @@ App:
                           - ExtComp0:
                               - CastType: "TEXT"
                               - Color: 0xFFFFFFFF
-                              - TextStr: "USB-C | 3840x2160@60\nPOS(0, 105)"
+                              - TextStrFmt: "<Label>\n<Res>@<Freq>\nPOS(<PosX>, <PosY>)"
                               - Font: "CodeNewRoman Nerd Font"
                               - FontSize: 12
                               - Format:
-                                  - Bold: 1
+                                  - Bold: 0
                                   - Italic: 0
                                   - Algin:
                                       - Vertical: "Center"
@@ -438,6 +519,14 @@ App:
                                   - OffsetY: 130
                                   - Rotation: 0
 
+          # ===================================================================
+          # LAYER 2: Right-Side Vertical Property Panel ("PROP" Panel)
+          # - RectClip (OffsetX:550, OffsetY:95, W:210, H:380) positions the PROP
+          #   panel to the right of the monitor Canvas.
+          # - IMPORTANT: All (OffsetX, OffsetY) coordinates of Comp0..Comp11 inside
+          #   Layer2 are LOCAL coordinates relative to Layer2's top-left origin (550, 95)!
+          #   (e.g. OffsetX: 0, OffsetY: 0 in Layer2 corresponds to (550, 95) on the window).
+          # ===================================================================
           - Layer2:
               - LayerId: 2
               - IsVisible: 1
@@ -449,6 +538,10 @@ App:
                   - OffsetY: 95
                   - Rotation: 0
               - Comps:
+                  # -----------------------------------------------------------
+                  # Layer2 -> Comp0: Property Panel Rounded Background ("PropPanelBg")
+                  # - OffsetX:0, OffsetY:0, W:210, H:380 (fills Layer2 clip region)
+                  # -----------------------------------------------------------
                   - Comp0:
                       - Class: "CONTAINER"
                       - Label: "PropPanelBg"
@@ -456,7 +549,7 @@ App:
                       - IsDraggable: 0
                       - IsVisible: 1
                       - Type:
-                          - Color: 0xFF1A202C
+                          - Color: 0xFF1A202C          # Right PROP panel background color
                           - Radius: 8
                           - IsFilled: 1
                           - Dim:
@@ -467,7 +560,11 @@ App:
                               - Rotation: 0
                           - Border:
                               - Size: 1
-                              - Color: 0xFF00B4D8
+                              - Color: 0xFF00B4D8      # Cyan border around the PROP panel
+                  # -----------------------------------------------------------
+                  # Layer2 -> Comp1: Property Panel Header Title ("PropTitle", e.g. "PROP: eDP-1")
+                  # - Supports optional TextStrFmt (e.g. "PROP: <Label> <Primary>")
+                  # -----------------------------------------------------------
                   - Comp1:
                       - Class: "LABEL"
                       - Label: "PropTitle"
@@ -492,6 +589,9 @@ App:
                               - OffsetX: 12
                               - OffsetY: 12
                               - Rotation: 0
+                  # -----------------------------------------------------------
+                  # Layer2 -> Comp2: Horizontal Separator Line under PROP Title ("PropSepLine")
+                  # -----------------------------------------------------------
                   - Comp2:
                       - Class: "CUSTOM"
                       - Label: "PropSepLine"
@@ -509,6 +609,9 @@ App:
                               - OffsetX: 10
                               - OffsetY: 38
                               - Rotation: 0
+                  # -----------------------------------------------------------
+                  # Layer2 -> Comp3: Selected Monitor Summary Info ("PropInfo")
+                  # -----------------------------------------------------------
                   - Comp3:
                       - Class: "LABEL"
                       - Label: "PropInfo"
@@ -533,6 +636,9 @@ App:
                               - OffsetX: 12
                               - OffsetY: 46
                               - Rotation: 0
+                  # -----------------------------------------------------------
+                  # Layer2 -> Comp4: Current Resolution Label ("PropResLabel", e.g. "Res: 1920x1080")
+                  # -----------------------------------------------------------
                   - Comp4:
                       - Class: "LABEL"
                       - Label: "PropResLabel"
@@ -557,6 +663,9 @@ App:
                               - OffsetX: 12
                               - OffsetY: 132
                               - Rotation: 0
+                  # -----------------------------------------------------------
+                  # Layer2 -> Comp5: Current Refresh Rate Label ("PropFreqLabel", e.g. "Freq: 60 Hz")
+                  # -----------------------------------------------------------
                   - Comp5:
                       - Class: "LABEL"
                       - Label: "PropFreqLabel"
@@ -581,6 +690,9 @@ App:
                               - OffsetX: 12
                               - OffsetY: 208
                               - Rotation: 0
+                  # -----------------------------------------------------------
+                  # Layer2 -> Comp6: Previous Resolution Button ("< Res")
+                  # -----------------------------------------------------------
                   - Comp6:
                       - Class: "BUTTON"
                       - Label: "< Res"
@@ -612,6 +724,9 @@ App:
                           - Event0:
                               - Type: "EVENT_TYPE_MOUSE_DOWN"
                               - CallBack: "OnBtnResPrevClick"
+                  # -----------------------------------------------------------
+                  # Layer2 -> Comp7: Next Resolution Button ("Res >")
+                  # -----------------------------------------------------------
                   - Comp7:
                       - Class: "BUTTON"
                       - Label: "Res >"
@@ -643,6 +758,9 @@ App:
                           - Event0:
                               - Type: "EVENT_TYPE_MOUSE_DOWN"
                               - CallBack: "OnBtnResNextClick"
+                  # -----------------------------------------------------------
+                  # Layer2 -> Comp8: Previous Refresh Rate Button ("< Freq")
+                  # -----------------------------------------------------------
                   - Comp8:
                       - Class: "BUTTON"
                       - Label: "< Freq"
@@ -674,6 +792,9 @@ App:
                           - Event0:
                               - Type: "EVENT_TYPE_MOUSE_DOWN"
                               - CallBack: "OnBtnFreqPrevClick"
+                  # -----------------------------------------------------------
+                  # Layer2 -> Comp9: Next Refresh Rate Button ("Freq >")
+                  # -----------------------------------------------------------
                   - Comp9:
                       - Class: "BUTTON"
                       - Label: "Freq >"
@@ -705,6 +826,9 @@ App:
                           - Event0:
                               - Type: "EVENT_TYPE_MOUSE_DOWN"
                               - CallBack: "OnBtnFreqNextClick"
+                  # -----------------------------------------------------------
+                  # Layer2 -> Comp10: Monitor Power Toggle Button ("State: ON/OFF")
+                  # -----------------------------------------------------------
                   - Comp10:
                       - Class: "BUTTON"
                       - Label: "State: ON (Click OFF)"
@@ -749,6 +873,9 @@ App:
                                   - OffsetX: 12
                                   - OffsetY: 292
                                   - Rotation: 0
+                  # -----------------------------------------------------------
+                  # Layer2 -> Comp11: Primary Display Selection Button ("Primary: YES / Set as Primary")
+                  # -----------------------------------------------------------
                   - Comp11:
                       - Class: "BUTTON"
                       - Label: "Primary: YES (Active)"

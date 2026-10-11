@@ -79,6 +79,7 @@ struct MainWindow_st {
     const_str_t Title;
     uint32_t    Width;
     uint32_t    Height;
+    Color_t     BgColor;
     uint8_t     IsVisible;
     WinMode_t   Mode;
     uint32_t    LayerCount;

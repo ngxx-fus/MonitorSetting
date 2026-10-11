@@ -1,7 +1,7 @@
 # Root Makefile for MonitorSelection
 CC          ?= gcc
 SDL_CFLAGS  := $(shell sdl2-config --cflags)
-SDL_LIBS    := $(shell sdl2-config --libs) -lSDL2_gfx -lSDL2_ttf -lpthread
+SDL_LIBS    := $(shell sdl2-config --libs) -lSDL2_gfx -lSDL2_ttf -lX11 -lpthread
 CFLAGS      ?= -Wall -Wextra -g $(SDL_CFLAGS)
 
 BUILD_DIR   ?= build

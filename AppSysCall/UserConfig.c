@@ -62,6 +62,7 @@ Err_t                   SysCallAppRunApplyCallbacks(const AppYamlConfig_t *p_app
 
 static char   *TrimLeading(char *p_str);
 static void    StripCommentAndNewline(char *p_line);
+static void    UnescapeYamlString(char *p_str);
 static int     ParseOptionalInt32(const char *p_val_str, int32_t *p_out_val);
 static uint8_t ParseHorizAlign(const char *p_val_str);
 static uint8_t ParseVertAlign(const char *p_val_str);
@@ -124,6 +125,31 @@ static void StripCommentAndNewline(char *p_line) {
     }
 
     /* Return after stripping comment and trailing whitespace */
+    return;
+}
+
+/* Convert escaped "\\n" and "\\t" sequences in a YAML string into actual newline/tab characters
+ * @param p_str[in/out] Mutable string to unescape in-place
+ */
+static void UnescapeYamlString(char *p_str) {
+    char *p_src = p_str;
+    char *p_dst = p_str;
+
+    /* Walk string and collapse backslash escape sequences */
+    while ('\0' != *p_src) {
+        if (('\\' == p_src[0]) && ('n' == p_src[1])) {
+            *p_dst++ = '\n';
+            p_src   += 2;
+        } else if (('\\' == p_src[0]) && ('t' == p_src[1])) {
+            *p_dst++ = '\t';
+            p_src   += 2;
+        } else {
+            *p_dst++ = *p_src++;
+        }
+    }
+    *p_dst = '\0';
+
+    /* Return after unescaping string in-place */
     return;
 }
 
@@ -680,6 +706,9 @@ Err_t SysCallAppConfigLoad(const_str_t path, AppYamlConfig_t *p_app_cfg) {
         } else if ((0U != in_main_win) && (0U == in_layers)) {
             if (0 == strcmp(p_key, "Title")) {
                 (void)snprintf(p_app_cfg->WinTitle, sizeof(p_app_cfg->WinTitle), "%s", p_val);
+            } else if (0 == strcmp(p_key, "Color")) {
+                p_app_cfg->WinColor    = (uint32_t)strtoul(p_val, NULL, 0);
+                p_app_cfg->WinHasColor = 1U;
             } else if (0 == strcmp(p_key, "Font")) {
                 (void)snprintf(p_app_cfg->WinFont, sizeof(p_app_cfg->WinFont), "%s", p_val);
             } else if (0 == strcmp(p_key, "Bold")) {
@@ -712,12 +741,40 @@ Err_t SysCallAppConfigLoad(const_str_t path, AppYamlConfig_t *p_app_cfg) {
                 in_sub_block = 0U;
             } else if ((cur_layer >= 0) && ((uint32_t)cur_layer < USER_CFG_MAX_LAYERS) &&
                        (cur_comp  >= 0) && ((uint32_t)cur_comp  < USER_CFG_MAX_COMPS)  &&
+                       (0 == strcmp(p_key, "Label"))) {
+                if ('\0' != p_val[0]) {
+                    AppCompYamlCfg_t *p_cc = &p_app_cfg->Comps[cur_layer][cur_comp];
+                    (void)snprintf(p_cc->Label, sizeof(p_cc->Label), "%s", p_val);
+                    p_cc->HasLabel = 1U;
+                }
+            } else if ((cur_layer >= 0) && ((uint32_t)cur_layer < USER_CFG_MAX_LAYERS) &&
+                       (cur_comp  >= 0) && ((uint32_t)cur_comp  < USER_CFG_MAX_COMPS)  &&
                        (0 == strcmp(p_key, "Font"))) {
                 /* Allow Font override under either Type: or ExtComps -> ExtComp0: */
                 if ('\0' != p_val[0]) {
                     AppCompYamlCfg_t *p_cc = &p_app_cfg->Comps[cur_layer][cur_comp];
                     (void)snprintf(p_cc->Font, sizeof(p_cc->Font), "%s", p_val);
                     p_cc->HasFont = 1U;
+                }
+            } else if ((cur_layer >= 0) && ((uint32_t)cur_layer < USER_CFG_MAX_LAYERS) &&
+                       (cur_comp  >= 0) && ((uint32_t)cur_comp  < USER_CFG_MAX_COMPS)  &&
+                       (0 == strcmp(p_key, "TextStrFmt"))) {
+                /* Allow TextStrFmt template under either Type: or ExtComps -> ExtComp0: */
+                if ('\0' != p_val[0]) {
+                    AppCompYamlCfg_t *p_cc = &p_app_cfg->Comps[cur_layer][cur_comp];
+                    (void)snprintf(p_cc->TextStrFmt, sizeof(p_cc->TextStrFmt), "%s", p_val);
+                    UnescapeYamlString(p_cc->TextStrFmt);
+                    p_cc->HasTextStrFmt = 1U;
+                }
+            } else if ((cur_layer >= 0) && ((uint32_t)cur_layer < USER_CFG_MAX_LAYERS) &&
+                       (cur_comp  >= 0) && ((uint32_t)cur_comp  < USER_CFG_MAX_COMPS)  &&
+                       (0 == strcmp(p_key, "TextStr"))) {
+                /* Allow TextStr override under either Type: or ExtComps -> ExtComp0: */
+                if ('\0' != p_val[0]) {
+                    AppCompYamlCfg_t *p_cc = &p_app_cfg->Comps[cur_layer][cur_comp];
+                    (void)snprintf(p_cc->TextStr, sizeof(p_cc->TextStr), "%s", p_val);
+                    UnescapeYamlString(p_cc->TextStr);
+                    p_cc->HasTextStr = 1U;
                 }
             } else if ((cur_layer >= 0) && ((uint32_t)cur_layer < USER_CFG_MAX_LAYERS) &&
                        (cur_comp  >= 0) && ((uint32_t)cur_comp  < USER_CFG_MAX_COMPS)  &&
@@ -758,34 +815,76 @@ Err_t SysCallAppConfigLoad(const_str_t path, AppYamlConfig_t *p_app_cfg) {
                 AppCompYamlCfg_t *p_cc = &p_app_cfg->Comps[cur_layer][cur_comp];
                 p_cc->VAlign    = ParseVertAlign(p_val);
                 p_cc->HasVAlign = 1U;
-            } else if ((0 == strcmp(p_key, "RectClip")) ||
-                       (0 == strcmp(p_key, "Border"))   ||
-                       (0 == strcmp(p_key, "Listeners")) ||
-                       (0 == strcmp(p_key, "ExtComps"))) {
+            } else if (0 == strcmp(p_key, "Border")) {
                 in_sub_block = 1U;
+            } else if (0 == strcmp(p_key, "ExtComps")) {
+                in_sub_block = 2U;
+            } else if ((0 == strcmp(p_key, "RectClip")) ||
+                       (0 == strcmp(p_key, "Listeners"))) {
+                in_sub_block = 3U;
+            } else if ((cur_layer >= 0) && ((uint32_t)cur_layer < USER_CFG_MAX_LAYERS) &&
+                       (cur_comp  >= 0) && ((uint32_t)cur_comp  < USER_CFG_MAX_COMPS)  &&
+                       (1U == in_sub_block)) {
+                /* Inside Border: block */
+                AppCompYamlCfg_t *p_cc = &p_app_cfg->Comps[cur_layer][cur_comp];
+                if (0 == strcmp(p_key, "Size")) {
+                    p_cc->BorderSize    = (uint32_t)strtoul(p_val, NULL, 10);
+                    p_cc->HasBorderSize = 1U;
+                } else if (0 == strcmp(p_key, "Color")) {
+                    p_cc->BorderColor    = (uint32_t)strtoul(p_val, NULL, 0);
+                    p_cc->HasBorderColor = 1U;
+                } else {
+                    /* Ignore other Border sub-keys */
+                }
+            } else if ((cur_layer >= 0) && ((uint32_t)cur_layer < USER_CFG_MAX_LAYERS) &&
+                       (cur_comp  >= 0) && ((uint32_t)cur_comp  < USER_CFG_MAX_COMPS)  &&
+                       (2U == in_sub_block)) {
+                /* Inside ExtComps: block */
+                AppCompYamlCfg_t *p_cc = &p_app_cfg->Comps[cur_layer][cur_comp];
+                if (0 == strcmp(p_key, "Color")) {
+                    p_cc->ExtTextColor    = (uint32_t)strtoul(p_val, NULL, 0);
+                    p_cc->HasExtTextColor = 1U;
+                } else {
+                    /* Ignore other ExtComps sub-keys (Font/FontSize/Format handled above) */
+                }
             } else if ((cur_layer >= 0) && ((uint32_t)cur_layer < USER_CFG_MAX_LAYERS) &&
                        (cur_comp  >= 0) && ((uint32_t)cur_comp  < USER_CFG_MAX_COMPS)  &&
                        (0U == in_sub_block)) {
                 AppCompYamlCfg_t *p_cc = &p_app_cfg->Comps[cur_layer][cur_comp];
 
                 if (0 == strcmp(p_key, "OffsetX")) {
-                    p_cc->OffsetX    = (int32_t)strtol(p_val, NULL, 10);
-                    p_cc->HasOffsetX = 1U;
+                    p_cc->OffsetX      = (int32_t)strtol(p_val, NULL, 10);
+                    p_cc->HasOffsetX   = 1U;
                 } else if (0 == strcmp(p_key, "OffsetY")) {
-                    p_cc->OffsetY    = (int32_t)strtol(p_val, NULL, 10);
-                    p_cc->HasOffsetY = 1U;
+                    p_cc->OffsetY      = (int32_t)strtol(p_val, NULL, 10);
+                    p_cc->HasOffsetY   = 1U;
                 } else if (0 == strcmp(p_key, "W")) {
-                    p_cc->W          = (uint32_t)strtoul(p_val, NULL, 10);
-                    p_cc->HasW       = 1U;
+                    p_cc->W            = (uint32_t)strtoul(p_val, NULL, 10);
+                    p_cc->HasW         = 1U;
                 } else if (0 == strcmp(p_key, "H")) {
-                    p_cc->H          = (uint32_t)strtoul(p_val, NULL, 10);
-                    p_cc->HasH       = 1U;
+                    p_cc->H            = (uint32_t)strtoul(p_val, NULL, 10);
+                    p_cc->HasH         = 1U;
                 } else if (0 == strcmp(p_key, "Color")) {
-                    p_cc->Color      = (uint32_t)strtoul(p_val, NULL, 0);
-                    p_cc->HasColor   = 1U;
+                    p_cc->Color        = (uint32_t)strtoul(p_val, NULL, 0);
+                    p_cc->HasColor     = 1U;
+                } else if (0 == strcmp(p_key, "Radius")) {
+                    p_cc->Radius       = (uint32_t)strtoul(p_val, NULL, 10);
+                    p_cc->HasRadius    = 1U;
+                } else if (0 == strcmp(p_key, "IsFilled")) {
+                    p_cc->IsFilled     = (uint8_t)strtoul(p_val, NULL, 10);
+                    p_cc->HasFilled    = 1U;
+                } else if (0 == strcmp(p_key, "Thickness")) {
+                    p_cc->Thickness    = (uint32_t)strtoul(p_val, NULL, 10);
+                    p_cc->HasThickness = 1U;
+                } else if (0 == strcmp(p_key, "EndX")) {
+                    p_cc->EndX         = (int32_t)strtol(p_val, NULL, 10);
+                    p_cc->HasEndX      = 1U;
+                } else if (0 == strcmp(p_key, "EndY")) {
+                    p_cc->EndY         = (int32_t)strtol(p_val, NULL, 10);
+                    p_cc->HasEndY      = 1U;
                 } else if (0 == strcmp(p_key, "IsVisible")) {
-                    p_cc->IsVisible   = (uint8_t)strtoul(p_val, NULL, 10);
-                    p_cc->HasVisible  = 1U;
+                    p_cc->IsVisible    = (uint8_t)strtoul(p_val, NULL, 10);
+                    p_cc->HasVisible   = 1U;
                 } else {
                     /* Ignore other component sub-keys */
                 }
