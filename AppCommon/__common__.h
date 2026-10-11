@@ -1,0 +1,27 @@
+#ifndef __APP_COMMON_COMMON_H__
+#define __APP_COMMON_COMMON_H__
+
+/* headers ********************************************************************/
+
+#include "stdio.h"
+#include "stdint.h"
+#include "stdarg.h"
+
+/* macros **********************************************************************/
+
+#ifndef LOG_ENGINE
+    #define LOG_ENGINE(...) printf(__VA_ARGS__) /* from stdio.h */
+#endif
+
+#ifndef TO_STRING
+    #define TO_STRING(X)    #X
+#endif 
+
+#ifndef UINT32
+    #define UINT32(x)   ((uint32_t) x)
+#endif
+
+/* reserved *******************************************************************/
+
+
+#endif /* __APP_COMMON_COMMON_H__ */
