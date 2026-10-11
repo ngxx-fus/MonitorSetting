@@ -1,0 +1,820 @@
+# =============================================================================
+# MonitorSelection - Application Configuration File (app.yml)
+# =============================================================================
+# HOW TO USE THIS FILE (RC / .zshrc Style Guide):
+#
+# 1. CAN I EDIT VALUES? (Duoc sua khong?)
+#    - [EDITABLE: YES] -> PreferDispPath, SnapThresholdPx, MainWindow (Title,
+#                         W, H, IsVisible, Mode), Layer0 & Layer2 component
+#                         positions (OffsetX, OffsetY, Color, FontSize,
+#                         IsVisible - e.g. Comp3 HeaderText status bar!), and
+#                         ApplyCallBack (CmdNum, cmd0..cmd31) are loaded
+#                         dynamically at startup!
+#    - [NOTE]          -> Layer1 monitor card positions are loaded from disp.yml.
+#
+# 2. CAN I ADD NEW ITEMS? (Duoc them khong?)
+#    - [EXTENSIBLE: YES] -> Under 'ApplyCallBack:', you can freely add more
+#                           commands: cmd0, cmd1, cmd2, cmd3 ... up to cmd31
+#                           (max 32 commands, SYSCALL_MAX_APPLY_CMDS = 32).
+#    - [EXTENSIBLE: NO]  -> Do not add arbitrary top-level keys or extra UI
+#                           layers here without registering them in main.c.
+# =============================================================================
+
+App:
+  # ---------------------------------------------------------------------------
+  # Path to the user display preference file (disp.yml)
+  # [EDITABLE: YES] [EXTENSIBLE: NO]
+  # Example:
+  #   - PreferDispPath: "UserConfig/disp.yml"
+  #   - PreferDispPath: "/home/fus/Documents/MonitorSelection/UserConfig/disp.yml"
+  # ---------------------------------------------------------------------------
+  - PreferDispPath: "/home/fus/Documents/MonitorSelection/UserConfig/disp.yml"
+
+  # ---------------------------------------------------------------------------
+  # Magnetic edge & corner snapping distance threshold (in pixels) on Canvas
+  # [EDITABLE: YES] [EXTENSIBLE: NO]
+  # Example:
+  #   - SnapThresholdPx: 15    # Tighter magnetic snap
+  #   - SnapThresholdPx: 25    # Default magnetic snap (recommended)
+  #   - SnapThresholdPx: 40    # Stronger magnetic pull
+  # ---------------------------------------------------------------------------
+  - SnapThresholdPx: 25
+
+  # ---------------------------------------------------------------------------
+  # Top-level SDL2 Main Window geometry, default Font & startup state
+  # [EDITABLE: YES] [EXTENSIBLE: NO]
+  # Example:
+  #   - Title: "My Custom Monitor Manager"
+  #   - W: 800
+  #   - H: 540
+  #   - IsVisible: 1                        # 1 = Show window on start, 0 = Start hidden
+  #   - Mode: "FLOATING"                    # "FLOATING" | "MAXIMIZED"
+  #   - Font: "CodeNewRoman Nerd Font"      # Global default font family (via fc-match) or .ttf/.otf path
+  # ---------------------------------------------------------------------------
+  - MainWindow:
+      - Title: "Monitor Selection"
+          - Format:
+            - Bold: 1               # 0 | 1
+            - Italic: 1             # 0 | 1
+            - Algin:
+                - Vertical: "Center" # Left | Right
+                - Horizona: "Center" # Left | Right
+      - W: 800
+      - H: 540
+      - IsVisible: 1
+      - Mode: "FLOATING"               # FLOATING | MAXIMIZED
+      - Font: "CodeNewRoman Nerd Font" # Global default font (any component can override with its own - Font:)
+      # -----------------------------------------------------------------------
+      # UI Layer & Component Hierarchy
+      # [EDITABLE: YES for OffsetX, OffsetY, Color, Font, FontSize, IsVisible]
+      # [EXTENSIBLE: NO]
+      # Layer0 = Header & Status Bar (Comp2=StatusCircle, Comp3=HeaderText)
+      # Layer1 = Monitor Canvas | Layer2 = Right Property Panel (PROP)
+      # -----------------------------------------------------------------------
+      - Layers:
+          - Layer0:
+              - LayerId: 0
+              - IsVisible: 0
+              - IsScrollable: 0
+              - RectClip:
+                  - W: 0
+                  - H: 0
+                  - OffsetX: 0
+                  - OffsetY: 0
+                  - Rotation: 0
+              - Comps:
+                  - Comp0:
+                      - Class: "CONTAINER"
+                      - Label: "MainPanel"
+                      - CastType: "RECT"
+                      - IsDraggable: 0
+                      - IsVisible: 1
+                      - Type:
+                          - Color: 0x00232936
+                          - Radius: 10
+                          - IsFilled: 1
+                          - Dim:
+                              - W: 740
+                              - H: 460
+                              - OffsetX: 30
+                              - OffsetY: 30
+                              - Rotation: 0
+                          - Border:
+                              - Size: 1
+                              - Color: 0x004A5568
+                  - Comp1:
+                      - Class: "CUSTOM"
+                      - Label: "HeaderLine"
+                      - CastType: "LINE"
+                      - IsDraggable: 0
+                      - IsVisible: 1
+                      - Type:
+                          - Color: 0xFF00B4D8
+                          - Thickness: 2
+                          - EndX: 760
+                          - EndY: 82
+                          - Dim:
+                              - W: 720
+                              - H: 0
+                              - OffsetX: 40
+                              - OffsetY: 82
+                              - Rotation: 0
+                  - Comp2:
+                      - Class: "CUSTOM"
+                      - Label: "StatusCircle"
+                      - CastType: "CIRCLE"
+                      - IsDraggable: 0
+                      - IsVisible: 1
+                      - Type:
+                          - Color: 0xFF00E676
+                          - Radius: 10
+                          - IsFilled: 1
+                          - Dim:
+                              - W: 24
+                              - H: 24
+                              - OffsetX: 50
+                              - OffsetY: 48
+                              - Rotation: 0
+                          - Border:
+                              - Size: 1
+                              - Color: 0xFFE2E8F0
+                  - Comp3:
+                      - Class: "LABEL"
+                      - Label: "HeaderText"
+                      - CastType: "TEXT"
+                      - IsDraggable: 0
+                      - IsVisible: 1
+                      - Type:
+                          - Color: 0xFFE2E8F0
+                          - TextStr: "Ready | Click or drag a monitor card to edit properties"
+                          - Font: "CodeNewRoman Nerd Font" # "" = inherit MainWindow.Font, or set custom font
+                          - FontSize: 13
+                          - Format:
+                              - Bold: 1
+                              - Italic: 0
+                              - Algin:
+                                  - Vertical: "Center"     # "Top" | "Center" | "Bottom"
+                                  - Horizona: "Left"       # "Left" | "Center" | "Right"
+                          - IsWrap: 0
+                          - Dim:
+                              - W: 668
+                              - H: 20
+                              - OffsetX: 82
+                              - OffsetY: 50
+                              - Rotation: 0
+                  - Comp4:
+                      - Class: "BUTTON"
+                      - Label: "Roll-back"
+                      - CastType: "RECT"
+                      - IsDraggable: 0
+                      - IsVisible: 1
+                      - Type:
+                          - Color: 0xFF4A5568
+                          - Radius: 6
+                          - IsFilled: 1
+                          - Dim:
+                              - W: 115
+                              - H: 28
+                              - OffsetX: 525
+                              - OffsetY: 500
+                              - Rotation: 0
+                          - Border:
+                              - Size: 1
+                              - Color: 0xFFFFFFFF
+                      - Listeners:
+                          - Event0:
+                              - Type: "EVENT_TYPE_MOUSE_DOWN"
+                              - CallBack: "OnBtnRollbackClick"
+                      - ExtComps:
+                          - Count: 1
+                          - ExtComp0:
+                              - CastType: "TEXT"
+                              - Color: 0xFFFFFFFF
+                              - TextStr: "Roll-back"
+                              - Font: "CodeNewRoman Nerd Font"
+                              - FontSize: 13
+                              - Format:
+                                  - Bold: 1
+                                  - Italic: 0
+                                  - Algin:
+                                      - Vertical: "Center"
+                                      - Horizona: "Center"
+                              - IsWrap: 0
+                              - Dim:
+                                  - W: 115
+                                  - H: 28
+                                  - OffsetX: 525
+                                  - OffsetY: 500
+                                  - Rotation: 0
+                  - Comp5:
+                      - Class: "BUTTON"
+                      - Label: "Apply"
+                      - CastType: "RECT"
+                      - IsDraggable: 0
+                      - IsVisible: 1
+                      - Type:
+                          - Color: 0xFF2B6CB0
+                          - Radius: 6
+                          - IsFilled: 1
+                          - Dim:
+                              - W: 115
+                              - H: 28
+                              - OffsetX: 650
+                              - OffsetY: 500
+                              - Rotation: 0
+                          - Border:
+                              - Size: 1
+                              - Color: 0xFFFFFFFF
+                      - Listeners:
+                          - Event0:
+                              - Type: "EVENT_TYPE_MOUSE_DOWN"
+                              - CallBack: "OnBtnApplyClick"
+                      - ExtComps:
+                          - Count: 1
+                          - ExtComp0:
+                              - CastType: "TEXT"
+                              - Color: 0xFFFFFFFF
+                              - TextStr: "Apply"
+                              - Font: "CodeNewRoman Nerd Font"
+                              - FontSize: 13
+                              - Format:
+                                  - Bold: 1
+                                  - Italic: 0
+                                  - Algin:
+                                      - Vertical: "Center"
+                                      - Horizona: "Center"
+                              - IsWrap: 0
+                              - Dim:
+                                  - W: 115
+                                  - H: 28
+                                  - OffsetX: 650
+                                  - OffsetY: 500
+                                  - Rotation: 0
+                  - Comp6:
+                      - Class: "CONTAINER"
+                      - Label: "CanvasPanelBg"
+                      - CastType: "RECT"
+                      - IsDraggable: 0
+                      - IsVisible: 1
+                      - Type:
+                          - Color: 0xFF1A202C
+                          - Radius: 8
+                          - IsFilled: 1
+                          - Dim:
+                              - W: 500
+                              - H: 380
+                              - OffsetX: 40
+                              - OffsetY: 95
+                              - Rotation: 0
+                          - Border:
+                              - Size: 1
+                              - Color: 0xFF00B4D8
+
+          - Layer1:
+              - LayerId: 1
+              - IsVisible: 1
+              - IsScrollable: 0
+              - RectClip:
+                  - W: 500
+                  - H: 380
+                  - OffsetX: 40
+                  - OffsetY: 95
+                  - Rotation: 0
+              - Comps:
+                  - Comp0:
+                      - Class: "BUTTON"
+                      - Label: "HDMI-1"
+                      - CastType: "RECT"
+                      - IsDraggable: 1
+                      - IsVisible: 1
+                      - Type:
+                          - Color: 0xDD1E4E8C
+                          - Radius: 8
+                          - IsFilled: 1
+                          - Dim:
+                              - W: 155
+                              - H: 95
+                              - OffsetX: 10
+                              - OffsetY: 25
+                              - Rotation: 0
+                          - Border:
+                              - Size: 2
+                              - Color: 0xFF00E5FF
+                      - Listeners:
+                          - Event0:
+                              - Type: "EVENT_TYPE_MOUSE_DOWN"
+                              - CallBack: "OnCardSelectClick"
+                          - Event1:
+                              - Type: "EVENT_TYPE_DRAG_START"
+                              - CallBack: "OnCardDragStart"
+                          - Event2:
+                              - Type: "EVENT_TYPE_DROP"
+                              - CallBack: "OnCardDrop"
+                          - Event3:
+                              - Type: "EVENT_TYPE_MONITOR"
+                              - CallBack: "OnMonitorEvent"
+                          - Event4:
+                              - Type: "EVENT_TYPE_USER_SIGNAL"
+                              - CallBack: "OnUserSignalEvent"
+                      - ExtComps:
+                          - Count: 1
+                          - ExtComp0:
+                              - CastType: "TEXT"
+                              - Color: 0xFFFFFFFF
+                              - TextStr: "HDMI-1 | 1920x1080@60\nPOS(0, 0)"
+                              - Font: "CodeNewRoman Nerd Font"
+                              - FontSize: 12
+                              - Format:
+                                  - Bold: 1
+                                  - Italic: 0
+                                  - Algin:
+                                      - Vertical: "Center"
+                                      - Horizona: "Center"
+                              - IsWrap: 1
+                              - Dim:
+                                  - W: 155
+                                  - H: 95
+                                  - OffsetX: 10
+                                  - OffsetY: 25
+                                  - Rotation: 0
+                  - Comp1:
+                      - Class: "BUTTON"
+                      - Label: "DP-1"
+                      - CastType: "RECT"
+                      - IsDraggable: 1
+                      - IsVisible: 1
+                      - Type:
+                          - Color: 0xDD2B6CB0
+                          - Radius: 8
+                          - IsFilled: 1
+                          - Dim:
+                              - W: 155
+                              - H: 95
+                              - OffsetX: 175
+                              - OffsetY: 25
+                              - Rotation: 0
+                          - Border:
+                              - Size: 1
+                              - Color: 0xFFFFFFFF
+                      - Listeners:
+                          - Event0:
+                              - Type: "EVENT_TYPE_MOUSE_DOWN"
+                              - CallBack: "OnCardSelectClick"
+                          - Event1:
+                              - Type: "EVENT_TYPE_DRAG_START"
+                              - CallBack: "OnCardDragStart"
+                          - Event2:
+                              - Type: "EVENT_TYPE_DROP"
+                              - CallBack: "OnCardDrop"
+                      - ExtComps:
+                          - Count: 1
+                          - ExtComp0:
+                              - CastType: "TEXT"
+                              - Color: 0xFFFFFFFF
+                              - TextStr: "DP-1 | 2560x1440@60\nPOS(165, 0)"
+                              - Font: "CodeNewRoman Nerd Font"
+                              - FontSize: 12
+                              - Format:
+                                  - Bold: 1
+                                  - Italic: 0
+                                  - Algin:
+                                      - Vertical: "Center"
+                                      - Horizona: "Center"
+                              - IsWrap: 1
+                              - Dim:
+                                  - W: 155
+                                  - H: 95
+                                  - OffsetX: 175
+                                  - OffsetY: 25
+                                  - Rotation: 0
+                  - Comp2:
+                      - Class: "BUTTON"
+                      - Label: "USB-C"
+                      - CastType: "RECT"
+                      - IsDraggable: 1
+                      - IsVisible: 1
+                      - Type:
+                          - Color: 0xDD2C7A7B
+                          - Radius: 8
+                          - IsFilled: 1
+                          - Dim:
+                              - W: 155
+                              - H: 95
+                              - OffsetX: 10
+                              - OffsetY: 130
+                              - Rotation: 0
+                          - Border:
+                              - Size: 1
+                              - Color: 0xFFFFFFFF
+                      - Listeners:
+                          - Event0:
+                              - Type: "EVENT_TYPE_MOUSE_DOWN"
+                              - CallBack: "OnCardSelectClick"
+                          - Event1:
+                              - Type: "EVENT_TYPE_DRAG_START"
+                              - CallBack: "OnCardDragStart"
+                          - Event2:
+                              - Type: "EVENT_TYPE_DROP"
+                              - CallBack: "OnCardDrop"
+                      - ExtComps:
+                          - Count: 1
+                          - ExtComp0:
+                              - CastType: "TEXT"
+                              - Color: 0xFFFFFFFF
+                              - TextStr: "USB-C | 3840x2160@60\nPOS(0, 105)"
+                              - Font: "CodeNewRoman Nerd Font"
+                              - FontSize: 12
+                              - Format:
+                                  - Bold: 1
+                                  - Italic: 0
+                                  - Algin:
+                                      - Vertical: "Center"
+                                      - Horizona: "Center"
+                              - IsWrap: 1
+                              - Dim:
+                                  - W: 155
+                                  - H: 95
+                                  - OffsetX: 10
+                                  - OffsetY: 130
+                                  - Rotation: 0
+
+          - Layer2:
+              - LayerId: 2
+              - IsVisible: 1
+              - IsScrollable: 0
+              - RectClip:
+                  - W: 210
+                  - H: 380
+                  - OffsetX: 550
+                  - OffsetY: 95
+                  - Rotation: 0
+              - Comps:
+                  - Comp0:
+                      - Class: "CONTAINER"
+                      - Label: "PropPanelBg"
+                      - CastType: "RECT"
+                      - IsDraggable: 0
+                      - IsVisible: 1
+                      - Type:
+                          - Color: 0xFF1A202C
+                          - Radius: 8
+                          - IsFilled: 1
+                          - Dim:
+                              - W: 210
+                              - H: 380
+                              - OffsetX: 0
+                              - OffsetY: 0
+                              - Rotation: 0
+                          - Border:
+                              - Size: 1
+                              - Color: 0xFF00B4D8
+                  - Comp1:
+                      - Class: "LABEL"
+                      - Label: "PropTitle"
+                      - CastType: "TEXT"
+                      - IsDraggable: 0
+                      - IsVisible: 1
+                      - Type:
+                          - Color: 0xFF00E5FF
+                          - TextStr: "PROP: HDMI-1 [ORIGIN]"
+                          - Font: "CodeNewRoman Nerd Font"
+                          - FontSize: 14
+                          - Format:
+                              - Bold: 1
+                              - Italic: 0
+                              - Algin:
+                                  - Vertical: "Center"
+                                  - Horizona: "Left"
+                          - IsWrap: 0
+                          - Dim:
+                              - W: 186
+                              - H: 20
+                              - OffsetX: 12
+                              - OffsetY: 12
+                              - Rotation: 0
+                  - Comp2:
+                      - Class: "CUSTOM"
+                      - Label: "PropSepLine"
+                      - CastType: "LINE"
+                      - IsDraggable: 0
+                      - IsVisible: 1
+                      - Type:
+                          - Color: 0xFF4A5568
+                          - Thickness: 1
+                          - EndX: 200
+                          - EndY: 38
+                          - Dim:
+                              - W: 190
+                              - H: 0
+                              - OffsetX: 10
+                              - OffsetY: 38
+                              - Rotation: 0
+                  - Comp3:
+                      - Class: "LABEL"
+                      - Label: "PropInfo"
+                      - CastType: "TEXT"
+                      - IsDraggable: 0
+                      - IsVisible: 1
+                      - Type:
+                          - Color: 0xFFE2E8F0
+                          - TextStr: "Display #1 (Top-Left 0,0) [PRI]\nRel POS: (0, 0)\nModes: 4 | Status: ON"
+                          - Font: "CodeNewRoman Nerd Font"
+                          - FontSize: 12
+                          - Format:
+                              - Bold: 0
+                              - Italic: 0
+                              - Algin:
+                                  - Vertical: "Top"
+                                  - Horizona: "Left"
+                          - IsWrap: 1
+                          - Dim:
+                              - W: 186
+                              - H: 76
+                              - OffsetX: 12
+                              - OffsetY: 46
+                              - Rotation: 0
+                  - Comp4:
+                      - Class: "LABEL"
+                      - Label: "PropResLabel"
+                      - CastType: "TEXT"
+                      - IsDraggable: 0
+                      - IsVisible: 1
+                      - Type:
+                          - Color: 0xFFFFFFFF
+                          - TextStr: "Res: 1920x1080"
+                          - Font: "CodeNewRoman Nerd Font"
+                          - FontSize: 13
+                          - Format:
+                              - Bold: 1
+                              - Italic: 0
+                              - Algin:
+                                  - Vertical: "Center"
+                                  - Horizona: "Left"
+                          - IsWrap: 0
+                          - Dim:
+                              - W: 186
+                              - H: 18
+                              - OffsetX: 12
+                              - OffsetY: 132
+                              - Rotation: 0
+                  - Comp5:
+                      - Class: "LABEL"
+                      - Label: "PropFreqLabel"
+                      - CastType: "TEXT"
+                      - IsDraggable: 0
+                      - IsVisible: 1
+                      - Type:
+                          - Color: 0xFFFFFFFF
+                          - TextStr: "Freq: 60 Hz"
+                          - Font: "CodeNewRoman Nerd Font"
+                          - FontSize: 13
+                          - Format:
+                              - Bold: 1
+                              - Italic: 0
+                              - Algin:
+                                  - Vertical: "Center"
+                                  - Horizona: "Left"
+                          - IsWrap: 0
+                          - Dim:
+                              - W: 186
+                              - H: 18
+                              - OffsetX: 12
+                              - OffsetY: 208
+                              - Rotation: 0
+                  - Comp6:
+                      - Class: "BUTTON"
+                      - Label: "< Res"
+                      - CastType: "RECT"
+                      - IsDraggable: 0
+                      - IsVisible: 1
+                      - Type:
+                          - Color: 0xFF2D3748
+                          - Radius: 6
+                          - IsFilled: 1
+                          - Font: "CodeNewRoman Nerd Font"
+                          - FontSize: 12
+                          - Format:
+                              - Bold: 1
+                              - Italic: 0
+                              - Algin:
+                                  - Vertical: "Center"
+                                  - Horizona: "Center"
+                          - Dim:
+                              - W: 90
+                              - H: 30
+                              - OffsetX: 12
+                              - OffsetY: 155
+                              - Rotation: 0
+                          - Border:
+                              - Size: 1
+                              - Color: 0xFFFFFFFF
+                      - Listeners:
+                          - Event0:
+                              - Type: "EVENT_TYPE_MOUSE_DOWN"
+                              - CallBack: "OnBtnResPrevClick"
+                  - Comp7:
+                      - Class: "BUTTON"
+                      - Label: "Res >"
+                      - CastType: "RECT"
+                      - IsDraggable: 0
+                      - IsVisible: 1
+                      - Type:
+                          - Color: 0xFF2D3748
+                          - Radius: 6
+                          - IsFilled: 1
+                          - Font: "CodeNewRoman Nerd Font"
+                          - FontSize: 12
+                          - Format:
+                              - Bold: 1
+                              - Italic: 0
+                              - Algin:
+                                  - Vertical: "Center"
+                                  - Horizona: "Center"
+                          - Dim:
+                              - W: 90
+                              - H: 30
+                              - OffsetX: 108
+                              - OffsetY: 155
+                              - Rotation: 0
+                          - Border:
+                              - Size: 1
+                              - Color: 0xFFFFFFFF
+                      - Listeners:
+                          - Event0:
+                              - Type: "EVENT_TYPE_MOUSE_DOWN"
+                              - CallBack: "OnBtnResNextClick"
+                  - Comp8:
+                      - Class: "BUTTON"
+                      - Label: "< Freq"
+                      - CastType: "RECT"
+                      - IsDraggable: 0
+                      - IsVisible: 1
+                      - Type:
+                          - Color: 0xFF2D3748
+                          - Radius: 6
+                          - IsFilled: 1
+                          - Font: "CodeNewRoman Nerd Font"
+                          - FontSize: 12
+                          - Format:
+                              - Bold: 1
+                              - Italic: 0
+                              - Algin:
+                                  - Vertical: "Center"
+                                  - Horizona: "Center"
+                          - Dim:
+                              - W: 90
+                              - H: 30
+                              - OffsetX: 12
+                              - OffsetY: 231
+                              - Rotation: 0
+                          - Border:
+                              - Size: 1
+                              - Color: 0xFFFFFFFF
+                      - Listeners:
+                          - Event0:
+                              - Type: "EVENT_TYPE_MOUSE_DOWN"
+                              - CallBack: "OnBtnFreqPrevClick"
+                  - Comp9:
+                      - Class: "BUTTON"
+                      - Label: "Freq >"
+                      - CastType: "RECT"
+                      - IsDraggable: 0
+                      - IsVisible: 1
+                      - Type:
+                          - Color: 0xFF2D3748
+                          - Radius: 6
+                          - IsFilled: 1
+                          - Font: "CodeNewRoman Nerd Font"
+                          - FontSize: 12
+                          - Format:
+                              - Bold: 1
+                              - Italic: 0
+                              - Algin:
+                                  - Vertical: "Center"
+                                  - Horizona: "Center"
+                          - Dim:
+                              - W: 90
+                              - H: 30
+                              - OffsetX: 108
+                              - OffsetY: 231
+                              - Rotation: 0
+                          - Border:
+                              - Size: 1
+                              - Color: 0xFFFFFFFF
+                      - Listeners:
+                          - Event0:
+                              - Type: "EVENT_TYPE_MOUSE_DOWN"
+                              - CallBack: "OnBtnFreqNextClick"
+                  - Comp10:
+                      - Class: "BUTTON"
+                      - Label: "State: ON (Click OFF)"
+                      - CastType: "RECT"
+                      - IsDraggable: 0
+                      - IsVisible: 1
+                      - Type:
+                          - Color: 0xFF2C7A7B
+                          - Radius: 6
+                          - IsFilled: 1
+                          - Dim:
+                              - W: 186
+                              - H: 30
+                              - OffsetX: 12
+                              - OffsetY: 292
+                              - Rotation: 0
+                          - Border:
+                              - Size: 1
+                              - Color: 0xFFFFFFFF
+                      - Listeners:
+                          - Event0:
+                              - Type: "EVENT_TYPE_MOUSE_DOWN"
+                              - CallBack: "OnBtnPowerToggleClick"
+                      - ExtComps:
+                          - Count: 1
+                          - ExtComp0:
+                              - CastType: "TEXT"
+                              - Color: 0xFFFFFFFF
+                              - TextStr: "State: ON (Click OFF)"
+                              - Font: "CodeNewRoman Nerd Font"
+                              - FontSize: 12
+                              - Format:
+                                  - Bold: 1
+                                  - Italic: 0
+                                  - Algin:
+                                      - Vertical: "Center"
+                                      - Horizona: "Center"
+                              - IsWrap: 0
+                              - Dim:
+                                  - W: 186
+                                  - H: 30
+                                  - OffsetX: 12
+                                  - OffsetY: 292
+                                  - Rotation: 0
+                  - Comp11:
+                      - Class: "BUTTON"
+                      - Label: "Primary: YES (Active)"
+                      - CastType: "RECT"
+                      - IsDraggable: 0
+                      - IsVisible: 1
+                      - Type:
+                          - Color: 0xFF2B6CB0
+                          - Radius: 6
+                          - IsFilled: 1
+                          - Dim:
+                              - W: 186
+                              - H: 30
+                              - OffsetX: 12
+                              - OffsetY: 332
+                              - Rotation: 0
+                          - Border:
+                              - Size: 1
+                              - Color: 0xFFFFFFFF
+                      - Listeners:
+                          - Event0:
+                              - Type: "EVENT_TYPE_MOUSE_DOWN"
+                              - CallBack: "OnBtnPrimaryClick"
+                      - ExtComps:
+                          - Count: 1
+                          - ExtComp0:
+                              - CastType: "TEXT"
+                              - Color: 0xFFFFFFFF
+                              - TextStr: "Primary: YES (Active)"
+                              - Font: "CodeNewRoman Nerd Font"
+                              - FontSize: 12
+                              - Format:
+                                  - Bold: 1
+                                  - Italic: 0
+                                  - Algin:
+                                      - Vertical: "Center"
+                                      - Horizona: "Center"
+                              - IsWrap: 0
+                              - Dim:
+                                  - W: 186
+                                  - H: 30
+                                  - OffsetX: 12
+                                  - OffsetY: 332
+                                  - Rotation: 0
+  # ---------------------------------------------------------------------------
+  # Post-Apply Shell Callback Commands (Run after Apply / Roll-back completes)
+  # [EDITABLE: YES] [EXTENSIBLE: YES -> Add cmd0, cmd1, cmd2 ... up to cmd31]
+  #
+  # HOW IT WORKS:
+  #   - Executed sequentially via '/bin/sh -c' right after xrandr applies the
+  #     new monitor layout (useful for reloading wallpaper, polybar, bspwm,
+  #     dunst, picom, or sending desktop notifications).
+  #   - Empty strings ("" or '') are safely skipped.
+  #   - You can increase CmdNum or simply append cmd2, cmd3, cmd4... (up to 32
+  #     commands total; CmdNum automatically expands to the highest cmd<N>).
+  #
+  # Examples (uncomment or copy into cmd0, cmd1, cmd2...):
+  #   - cmd0: "/home/fus/.config/bspwm/scripts/background.sh"
+  #   - cmd1: "polybar-msg cmd restart || ~/.config/polybar/launch.sh &"
+  #   - cmd2: "bspc wm -r"
+  #   - cmd3: "feh --bg-fill ~/Pictures/wallpaper.jpg"
+  #   - cmd4: "notify-send 'MonitorSelection' 'Display layout applied!'"
+  # ---------------------------------------------------------------------------
+  - ApplyCallBack:  # Run after the Apply button action done
+        - CmdNum:  2
+        - cmd0: "/home/fus/.config/bspwm/scripts/background.sh &"
+        - cmd1: "sleep 1"
+        - cmd2: "/home/fus/.config/bspwm/polybar/polybar-ob &"
+        - cmd3: "notify-send 'Monitor Selection' 'Display layout applied!'"

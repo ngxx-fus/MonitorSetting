@@ -24,6 +24,7 @@
 /* exported functions *****************************************************************************
  **************************************************************************************************/
 
+Err_t DrawSetDefaultFont(const_str_t font_name);
 Err_t DrawRect(const CompRectCfg_t *p_rect);
 Err_t DrawCircle(const CompCircleCfg_t *p_circle);
 Err_t DrawLine(const CompLineCfg_t *p_line);

@@ -34,3 +34,5 @@ clean:
 	rm -rf $(BUILD_DIR) $(TARGET) docs
 	@$(MAKE) -C AppCommon clean
 	@$(MAKE) -C AppSDL2 clean
+	@$(MAKE) -C AppSysCall clean
+

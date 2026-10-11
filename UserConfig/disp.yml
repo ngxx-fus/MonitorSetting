@@ -1,0 +1,50 @@
+# =============================================================================
+# MonitorSelection - Display Preference Configuration (disp.yml)
+# =============================================================================
+# CAN I EDIT VALUES? -> YES! Edit any field below; loaded on startup.
+# CAN I ADD ITEMS?   -> YES! Up to Disp0 .. Disp7 (SYSCALL_MAX_MONITORS = 8).
+# NOTE: Clicking 'Apply' in the UI automatically saves current settings here.
+#
+# Quick Property Reference (RC-style examples):
+#   - Label   : Connector name (e.g. "eDP-1", "DP-2", "HDMI-1"), or "" = auto
+#   - Enabled : 1 = ON (active), 0 = OFF (--off, black card), -1/empty = auto ON
+#   - Primary : 1 = Primary (--primary), 0 = Non-primary, -1/empty = auto primary
+#   - W / H   : Resolution in px (e.g. 1920 / 1080), or -1/empty = auto MAX mode
+#   - Freq    : Refresh rate in Hz (e.g. 60, 100, 144), or -1/empty = auto MAX Hz
+#   - PosX/Y  : Real xrandr offset in px from Origin (0,0), or -1/empty = auto
+# =============================================================================
+
+DisplayPreferSettings:
+    # --- Monitor Slot #0 (Disp0) [EDITABLE: YES] ---
+    # Example: Label: "eDP-1" | Set W: -1, H: -1, Freq: -1 for auto MAX mode
+    - Disp0:
+        - Label:   "eDP-1"
+        - Enabled: 1
+        - Primary: 0
+        - W:       1920
+        - H:       1200
+        - Freq:    60
+        - PosX:    1920
+        - PosY:    0
+    # --- Monitor Slot #1 (Disp1) [EDITABLE: YES] ---
+    # Example: Label: "eDP-1" | Set W: -1, H: -1, Freq: -1 for auto MAX mode
+    - Disp1:
+        - Label:   "DP-2"
+        - Enabled: 1
+        - Primary: 1
+        - W:       1920
+        - H:       1080
+        - Freq:    60
+        - PosX:    0
+        - PosY:    1080
+    # --- Monitor Slot #2 (Disp2) [EDITABLE: YES] ---
+    # Example: Label: "eDP-1" | Set W: -1, H: -1, Freq: -1 for auto MAX mode
+    - Disp2:
+        - Label:   "HDMI-1"
+        - Enabled: 1
+        - Primary: 0
+        - W:       1920
+        - H:       1080
+        - Freq:    100
+        - PosX:    0
+        - PosY:    0

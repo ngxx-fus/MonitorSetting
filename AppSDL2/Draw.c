@@ -14,8 +14,21 @@
 /* macros *****************************************************************************************
  **************************************************************************************************/
 
+#define DRAW_FONT_CACHE_MAX             (24U)
+#define DRAW_FONT_NAME_MAX              (128U)
+#define DRAW_FONT_PATH_MAX              (256U)
+
 /* definitions ************************************************************************************
  **************************************************************************************************/
+
+/* Cached SDL_ttf font entry keyed by (Name, Size) */
+struct FontCacheEntry_st {
+    uint8_t   IsUsed;
+    char      Name[DRAW_FONT_NAME_MAX];
+    uint32_t  Size;
+    TTF_Font *p_Font;
+};
+typedef struct FontCacheEntry_st FontCacheEntry_t;
 
 /* exported variables *****************************************************************************
  **************************************************************************************************/
@@ -27,9 +40,11 @@
  **************************************************************************************************/
 
 /* Active layer origin offset in MainWindow coordinates (RectClip.Offset + Layer.Scroll) */
-static int32_t g_LayerOriginX         = 0;
-static int32_t g_LayerOriginY         = 0;
-static uint8_t g_InCompRotationTarget = 0U;
+static int32_t          g_LayerOriginX         = 0;
+static int32_t          g_LayerOriginY         = 0;
+static uint8_t          g_InCompRotationTarget = 0U;
+static char             g_DefaultFontName[DRAW_FONT_NAME_MAX] = "";
+static FontCacheEntry_t g_FontCache[DRAW_FONT_CACHE_MAX];
 
 /* exported functions *****************************************************************************
  **************************************************************************************************/
@@ -37,6 +52,7 @@ static uint8_t g_InCompRotationTarget = 0U;
 /* public functions *******************************************************************************
  **************************************************************************************************/
 
+Err_t DrawSetDefaultFont(const_str_t font_name);
 Err_t DrawRect(const CompRectCfg_t *p_rect);
 Err_t DrawCircle(const CompCircleCfg_t *p_circle);
 Err_t DrawLine(const CompLineCfg_t *p_line);
@@ -48,8 +64,137 @@ Err_t DrawLayer(const Layer_t *p_layer);
 /* private functions ******************************************************************************
  **************************************************************************************************/
 
+static void      ResolveFontFileViaFcMatch(const char *p_family, char *p_out_path, size_t out_len);
+static TTF_Font *GetCachedTtfFont(const_str_t font_name, uint32_t font_size);
+
 /* function implementations ***********************************************************************
  **************************************************************************************************/
+
+/* Resolve a font family name (e.g. "CodeNewRoman Nerd Font") to a .ttf/.otf file path via fc-match
+ * @param p_family[in] Font family name or direct file path
+ * @param p_out_path[out] Resolved file path buffer
+ * @param out_len[in] Size of p_out_path buffer
+ */
+static void ResolveFontFileViaFcMatch(const char *p_family, char *p_out_path, size_t out_len) {
+    char  cmd[512];
+    FILE *p_pipe;
+
+    p_out_path[0] = '\0';
+    if ((NULL == p_family) || ('\0' == p_family[0])) {
+        /* Return empty path if family name is empty */
+        return;
+    }
+
+    /* If p_family already looks like a direct file path, copy it directly */
+    if ('/' == p_family[0]) {
+        (void)snprintf(p_out_path, out_len, "%s", p_family);
+        /* Return direct file path */
+        return;
+    }
+
+    (void)snprintf(cmd, sizeof(cmd), "fc-match -f \"%%{file}\" \"%s\" 2>/dev/null", p_family);
+    p_pipe = popen(cmd, "r");
+    if (NULL != p_pipe) {
+        if (NULL != fgets(p_out_path, (int)out_len, p_pipe)) {
+            size_t len = strlen(p_out_path);
+            while ((len > 0U) &&
+                   (('\n' == p_out_path[len - 1U]) || ('\r' == p_out_path[len - 1U]))) {
+                p_out_path[len - 1U] = '\0';
+                len--;
+            }
+        }
+        (void)pclose(p_pipe);
+    }
+
+    /* Return after resolving font path */
+    return;
+}
+
+/* Lookup or open a cached TTF_Font for the requested font family/path and pixel size
+ * @param font_name[in] Component-specific font name, or NULL/"" to use g_DefaultFontName
+ * @param font_size[in] Font pixel size (defaults to 13 if 0)
+ * @return Pointer to opened TTF_Font, or NULL if no TTF font is configured/available
+ */
+static TTF_Font *GetCachedTtfFont(const_str_t font_name, uint32_t font_size) {
+    const char *p_eff_name = NULL;
+    uint32_t    eff_size   = (font_size > 0U) ? font_size : 13U;
+    uint32_t    idx;
+    uint32_t    free_slot  = DRAW_FONT_CACHE_MAX;
+    char        font_path[DRAW_FONT_PATH_MAX];
+    TTF_Font   *p_font     = NULL;
+
+    /* Select component-specific FontName first, or fall back to MainWindow default font */
+    if ((NULL != font_name) && ('\0' != font_name[0])) {
+        p_eff_name = font_name;
+    } else if ('\0' != g_DefaultFontName[0]) {
+        p_eff_name = g_DefaultFontName;
+    } else {
+        /* Return NULL to use built-in bitmap font when no font name is configured */
+        return NULL;
+    }
+
+    /* Ensure SDL_ttf is initialized */
+    if (0 == TTF_WasInit()) {
+        if (0 != TTF_Init()) {
+            /* Return NULL if SDL_ttf cannot be initialized */
+            return NULL;
+        }
+    }
+
+    /* Check cache for an existing (Name, Size) entry */
+    for (idx = 0U; idx < DRAW_FONT_CACHE_MAX; idx++) {
+        if (0U != g_FontCache[idx].IsUsed) {
+            if ((g_FontCache[idx].Size == eff_size) &&
+                (0 == strcmp(g_FontCache[idx].Name, p_eff_name))) {
+                /* Return cached TTF_Font pointer */
+                return g_FontCache[idx].p_Font;
+            }
+        } else if (DRAW_FONT_CACHE_MAX == free_slot) {
+            free_slot = idx;
+        } else {
+            /* Keep scanning cache */
+        }
+    }
+
+    /* Resolve font family name to .ttf/.otf file path and open via SDL_ttf */
+    ResolveFontFileViaFcMatch(p_eff_name, font_path, sizeof(font_path));
+    if ('\0' != font_path[0]) {
+        p_font = TTF_OpenFont(font_path, (int)eff_size);
+        if (NULL != p_font) {
+            APP_INFO("Loaded TTF font '%s' (%u px) -> %s", p_eff_name, eff_size, font_path);
+        }
+    }
+
+    /* Store result in cache (even if NULL, to avoid re-running fc-match every frame) */
+    if (free_slot < DRAW_FONT_CACHE_MAX) {
+        g_FontCache[free_slot].IsUsed = 1U;
+        (void)snprintf(g_FontCache[free_slot].Name, sizeof(g_FontCache[free_slot].Name), "%s", p_eff_name);
+        g_FontCache[free_slot].Size   = eff_size;
+        g_FontCache[free_slot].p_Font = p_font;
+    }
+
+    /* Return opened TTF_Font pointer */
+    return p_font;
+}
+
+/* Set the default window-wide font family name or .ttf/.otf file path
+ * @param font_name[in] Font family name (e.g. "CodeNewRoman Nerd Font") or path
+ * @return APP_SUCCESS on success, or APP_ERROR_NULL if font_name is NULL
+ */
+Err_t DrawSetDefaultFont(const_str_t font_name) {
+    #if (1U == PARAM_CHECK_EN)
+    /* Validate font_name pointer */
+    if (NULL == font_name) {
+        APP_ERR("font_name is NULL in DrawSetDefaultFont!");
+        return APP_ERROR_NULL;
+    }
+    #endif /* (1U == PARAM_CHECK_EN) */
+
+    (void)snprintf(g_DefaultFontName, sizeof(g_DefaultFontName), "%s", font_name);
+
+    /* Return success after updating default font name */
+    return APP_SUCCESS;
+}
 
 /* Draw a rectangle with optional corner radius, fill, border, and 0-360 degree rotation
  * @param p_rect[in] Pointer to rectangle configuration (coordinates relative to Layer (0,0))
@@ -267,20 +412,23 @@ Err_t DrawLine(const CompLineCfg_t *p_line) {
     return APP_SUCCESS;
 }
 
-/* Draw a text string component relative to Layer (0,0) with newline, wrap, and alignment support
+/* Draw a text string component relative to Layer (0,0) with TTF font, newline, wrap, and alignment
  * @param p_text[in] Pointer to text configuration
  * @return APP_SUCCESS on success, or APP_ERROR_NULL
- * @note Supports '\n' line breaks, automatic word wrapping within Dim.W, and H/V alignment
+ * @note Uses p_text->FontName (or MainWindow default font via SDL2_ttf), with 8x8 bitmap fallback
  */
 Err_t DrawText(const CompTextCfg_t *p_text) {
     SDL_Renderer *p_ren;
+    TTF_Font     *p_ttf      = NULL;
     char          line_buf[32][128];
     uint32_t      line_len[32];
+    int32_t       line_px_w[32];
     uint32_t      line_count = 0U;
     uint32_t      max_chars  = 127U;
     const char   *p_cur;
     int32_t       char_w     = 8;
     int32_t       line_h     = 14;
+    int32_t       glyph_h    = 8;
     int32_t       total_h;
     int32_t       start_y;
     uint32_t      idx;
@@ -298,6 +446,34 @@ Err_t DrawText(const CompTextCfg_t *p_text) {
     if ((NULL == p_ren) || (NULL == p_text->TextStr)) {
         /* Skip rendering if renderer or string is NULL */
         return APP_SUCCESS;
+    }
+
+    /* Obtain cached TTF_Font for p_text->FontName (or Window default font) and p_text->FontSize */
+    p_ttf = GetCachedTtfFont(p_text->FontName, p_text->FontSize);
+    if (NULL != p_ttf) {
+        int ttf_style = TTF_STYLE_NORMAL;
+        int adv_w     = 0;
+        int adv_h     = 0;
+
+        /* Apply Bold and Italic style flags from Format configuration */
+        if (0U != p_text->IsBold) {
+            ttf_style |= TTF_STYLE_BOLD;
+        }
+        if (0U != p_text->IsItalic) {
+            ttf_style |= TTF_STYLE_ITALIC;
+        }
+        if (TTF_GetFontStyle(p_ttf) != ttf_style) {
+            TTF_SetFontStyle(p_ttf, ttf_style);
+        }
+
+        if ((0 == TTF_SizeUTF8(p_ttf, "M", &adv_w, &adv_h)) && (adv_w > 0)) {
+            char_w  = adv_w;
+            glyph_h = adv_h;
+        }
+        line_h = TTF_FontLineSkip(p_ttf);
+        if (line_h < glyph_h) {
+            line_h = glyph_h + 2;
+        }
     }
 
     /* Calculate maximum characters per line when wrapping is enabled and Dim.W is valid */
@@ -338,6 +514,14 @@ Err_t DrawText(const CompTextCfg_t *p_text) {
         (void)memcpy(line_buf[line_count], p_cur, count);
         line_buf[line_count][count] = '\0';
         line_len[line_count]        = count;
+        if ((NULL != p_ttf) && (count > 0U)) {
+            int tw = 0;
+            int th = 0;
+            (void)TTF_SizeUTF8(p_ttf, line_buf[line_count], &tw, &th);
+            line_px_w[line_count] = tw;
+        } else {
+            line_px_w[line_count] = (int32_t)count * char_w;
+        }
         line_count++;
 
         p_cur += count;
@@ -357,8 +541,8 @@ Err_t DrawText(const CompTextCfg_t *p_text) {
         return APP_SUCCESS;
     }
 
-    /* Calculate total block height (each line is 8px glyph + 6px vertical spacing, minus trailing spacing) */
-    total_h = ((int32_t)line_count * line_h) - (line_h - 8);
+    /* Calculate total block height */
+    total_h = ((int32_t)line_count * line_h) - (line_h - glyph_h);
 
     /* Compute starting Y coordinate based on vertical alignment (VAlign) */
     start_y = g_LayerOriginY + p_text->Dim.OffsetY;
@@ -374,28 +558,59 @@ Err_t DrawText(const CompTextCfg_t *p_text) {
 
     /* Render each formatted line with horizontal alignment (Align) */
     for (idx = 0U; idx < line_count; idx++) {
-        int32_t line_px_w = (int32_t)line_len[idx] * char_w;
-        int32_t draw_x    = g_LayerOriginX + p_text->Dim.OffsetX;
-        int32_t draw_y    = start_y + ((int32_t)idx * line_h);
+        int32_t l_width = line_px_w[idx];
+        int32_t draw_x  = g_LayerOriginX + p_text->Dim.OffsetX;
+        int32_t draw_y  = start_y + ((int32_t)idx * line_h);
+
+        if (0U == line_len[idx]) {
+            /* Skip empty line */
+            continue;
+        }
 
         /* Adjust X coordinate if horizontal alignment is CENTER or RIGHT and Dim.W is non-zero */
         if (p_text->Dim.W > 0U) {
             if (TEXT_ALIGN_CENTER == p_text->Align) {
-                draw_x += ((int32_t)p_text->Dim.W - line_px_w) / 2;
+                draw_x += ((int32_t)p_text->Dim.W - l_width) / 2;
             } else if (TEXT_ALIGN_RIGHT == p_text->Align) {
-                draw_x += (int32_t)p_text->Dim.W - line_px_w;
+                draw_x += (int32_t)p_text->Dim.W - l_width;
             } else {
                 /* TEXT_ALIGN_LEFT uses OffsetX directly */
             }
         }
 
-        /* Draw current text line via SDL2_gfx */
-        (void)stringRGBA(p_ren,
-                         (int16_t)draw_x,
-                         (int16_t)draw_y,
-                         line_buf[idx],
-                         p_text->Color.b.r, p_text->Color.b.g,
-                         p_text->Color.b.b, p_text->Color.b.a);
+        /* Render crisp anti-aliased TTF text if font is loaded, otherwise fallback to SDL2_gfx */
+        if (NULL != p_ttf) {
+            SDL_Color    fg_col;
+            SDL_Surface *p_surf;
+
+            fg_col.r = p_text->Color.b.r;
+            fg_col.g = p_text->Color.b.g;
+            fg_col.b = p_text->Color.b.b;
+            fg_col.a = p_text->Color.b.a;
+
+            p_surf = TTF_RenderUTF8_Blended(p_ttf, line_buf[idx], fg_col);
+            if (NULL != p_surf) {
+                SDL_Texture *p_tex = SDL_CreateTextureFromSurface(p_ren, p_surf);
+                if (NULL != p_tex) {
+                    SDL_Rect dst;
+                    dst.x = draw_x;
+                    dst.y = draw_y;
+                    dst.w = p_surf->w;
+                    dst.h = p_surf->h;
+                    (void)SDL_SetTextureAlphaMod(p_tex, fg_col.a);
+                    (void)SDL_RenderCopy(p_ren, p_tex, NULL, &dst);
+                    SDL_DestroyTexture(p_tex);
+                }
+                SDL_FreeSurface(p_surf);
+            }
+        } else {
+            (void)stringRGBA(p_ren,
+                             (int16_t)draw_x,
+                             (int16_t)draw_y,
+                             line_buf[idx],
+                             p_text->Color.b.r, p_text->Color.b.g,
+                             p_text->Color.b.b, p_text->Color.b.a);
+        }
     }
 
     /* Return success after drawing multi-line aligned text */
@@ -641,6 +856,7 @@ Err_t DrawComponent(const Comp_t *p_comp) {
         btn_txt.Color.w  = 0xFFFFFFFFU;
         btn_txt.Dim      = p_comp->Type.Rect.Dim;
         btn_txt.TextStr  = p_comp->Label;
+        btn_txt.FontName = NULL;
         btn_txt.FontSize = 12U;
         btn_txt.Align    = TEXT_ALIGN_CENTER;
         btn_txt.VAlign   = TEXT_VALIGN_MIDDLE;
@@ -772,16 +988,17 @@ Err_t DrawLayer(const Layer_t *p_layer) {
                 (void)DrawComponent(&p_layer->p_Comps[comp_idx]);
             }
 
-            /* Draw scrollable viewport border inside offscreen texture so it rotates with the layer */
+            /* Draw rounded scrollable viewport border inside offscreen texture so it rotates with the layer */
             if ((0U != p_layer->IsScrollable) &&
                 (p_layer->RectClip.W > 0U) &&
                 (p_layer->RectClip.H > 0U)) {
-                (void)rectangleRGBA(p_ren,
-                                    0,
-                                    0,
-                                    (int16_t)(tex_w - 1),
-                                    (int16_t)(tex_h - 1),
-                                    0U, 180U, 216U, 255U);
+                (void)roundedRectangleRGBA(p_ren,
+                                           0,
+                                           0,
+                                           (int16_t)(tex_w - 1),
+                                           (int16_t)(tex_h - 1),
+                                           8,
+                                           0U, 180U, 216U, 255U);
             }
 
             /* Restore main render target and composite rotated layer viewport */
@@ -828,16 +1045,17 @@ Err_t DrawLayer(const Layer_t *p_layer) {
         (void)DrawComponent(&p_layer->p_Comps[comp_idx]);
     }
 
-    /* Reset clipping and draw a subtle frame around scrollable RectClip in MainWindow coords */
+    /* Reset clipping and draw a rounded frame around scrollable RectClip in MainWindow coords */
     if ((0U != has_rect_clip) && (NULL != p_ren)) {
         (void)SDL_RenderSetClipRect(p_ren, NULL);
         if (0U != p_layer->IsScrollable) {
-            (void)rectangleRGBA(p_ren,
-                                (int16_t)p_layer->RectClip.OffsetX,
-                                (int16_t)p_layer->RectClip.OffsetY,
-                                (int16_t)(p_layer->RectClip.OffsetX + (int32_t)p_layer->RectClip.W - 1),
-                                (int16_t)(p_layer->RectClip.OffsetY + (int32_t)p_layer->RectClip.H - 1),
-                                0U, 180U, 216U, 255U);
+            (void)roundedRectangleRGBA(p_ren,
+                                       (int16_t)p_layer->RectClip.OffsetX,
+                                       (int16_t)p_layer->RectClip.OffsetY,
+                                       (int16_t)(p_layer->RectClip.OffsetX + (int32_t)p_layer->RectClip.W - 1),
+                                       (int16_t)(p_layer->RectClip.OffsetY + (int32_t)p_layer->RectClip.H - 1),
+                                       8,
+                                       0U, 180U, 216U, 255U);
         }
     }
 

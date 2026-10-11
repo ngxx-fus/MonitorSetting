@@ -117,10 +117,13 @@ struct CompTextCfg_st {
     Color_t      Color;
     CompDim_t    Dim;
     const_str_t  TextStr;
+    const_str_t  FontName;              /* Font family name or .ttf/.otf path (NULL/"" = Window default) */
     uint32_t     FontSize;
     TextAlign_t  Align;                 /* Horizontal alignment within Dim.W */
     TextVAlign_t VAlign;                /* Vertical alignment within Dim.H */
     uint8_t      IsWrap;                /* Non-zero to wrap text within Dim.W */
+    uint8_t      IsBold;                /* Non-zero to render bold text via TTF_STYLE_BOLD */
+    uint8_t      IsItalic;              /* Non-zero to render italic text via TTF_STYLE_ITALIC */
 };
 typedef struct CompTextCfg_st CompTextCfg_t;
 
