@@ -24,3 +24,4 @@
 - API:
     + Shall provide "All.h" as public API for other modules to call.
     + Shall provide "__common__.h" as private API for entire module to call.
+    + Shall provide "__config__.h" as private config for entire module to call.

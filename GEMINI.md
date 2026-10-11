@@ -33,6 +33,26 @@ Dưới đây là nội dung hoàn chỉnh và chuẩn hóa cho file `GEMINI.md`
 - **Control Flow Traceability**:
   - Add explanatory comments immediately before jump statements (`return`, `break`, `continue`, `goto`).
   - Add explanatory comments before steering/control-flow branching (`if`, `switch`, loops).
+- **Paramatters check**: Parametters check is required, and shall be wrapped in PARAM_CHECK_EN macro
+  ```c
+  err_t foo(param_t param){
+    #if (1U == PARAM_CHECK_EN)
+      if(IsValid(param)){
+        APP_ERR("Param is invalid!")
+        return stat_err_invalid_param;
+      }
+    #endif
+  }
+  ```
+- **Comment before branching**: Shall add comment before branching keyword (if it's complicated):
+    + function call: Call to do what?
+    + if/else: what condition?
+    + for: what we repeat to get?
+    + continue
+    + break
+    + return
+- **App log**: Shall log the error before exit the app. If the log was added, comment before branching is no need.
+
 
 ---
 
