@@ -199,8 +199,9 @@ Err_t EventHandleDragDrop(Layer_t *p_layers, uint32_t layer_count, const EventDa
             }
         }
     } else if ((EVENT_TYPE_MOUSE_MOVE == p_event->Type) && (0U != g_DragDropCtx.IsDragging)) {
-        /* Check if dragged component pointer is valid */
-        if (NULL != g_DragDropCtx.p_DraggedComp) {
+        /* Assert dragged component pointer is valid when IsDragging is active */
+        ASSERT_NOT_EQUAL(NULL, g_DragDropCtx.p_DraggedComp);
+        {
             int32_t new_x = p_event->MouseX - g_DragDropCtx.GrabOffsetX;
             int32_t new_y = p_event->MouseY - g_DragDropCtx.GrabOffsetY;
 
@@ -220,16 +221,16 @@ Err_t EventHandleDragDrop(Layer_t *p_layers, uint32_t layer_count, const EventDa
             (void)WindowQueuePush(WIN_ACTION_UPDATE_ALL, g_DragDropCtx.p_DraggedComp);
         }
     } else if ((EVENT_TYPE_MOUSE_UP == p_event->Type) && (0U != g_DragDropCtx.IsDragging)) {
-        /* Complete drop operation if a component was being dragged */
-        if (NULL != g_DragDropCtx.p_DraggedComp) {
-            drag_ev      = *p_event;
-            drag_ev.Type = EVENT_TYPE_DROP;
-            /* Notify dragged component that drop occurred */
-            (void)EventDispatchToComp(g_DragDropCtx.p_DraggedComp, &drag_ev);
+        /* Assert dragged component pointer is valid before completing drop operation */
+        ASSERT_NOT_EQUAL(NULL, g_DragDropCtx.p_DraggedComp);
+        drag_ev      = *p_event;
+        drag_ev.Type = EVENT_TYPE_DROP;
+        /* Notify dragged component that drop occurred */
+        (void)EventDispatchToComp(g_DragDropCtx.p_DraggedComp, &drag_ev);
 
-            /* Queue final window update on g_MainWindowUpdateQueue (wakes main thread) */
-            (void)WindowQueuePush(WIN_ACTION_UPDATE_ALL, g_DragDropCtx.p_DraggedComp);
-        }
+        /* Queue final window update on g_MainWindowUpdateQueue (wakes main thread) */
+        (void)WindowQueuePush(WIN_ACTION_UPDATE_ALL, g_DragDropCtx.p_DraggedComp);
+
         g_DragDropCtx.IsDragging       = 0U;
         g_DragDropCtx.p_DraggedComp    = NULL;
         g_DragDropCtx.p_DropTargetComp = NULL;
@@ -419,6 +420,10 @@ Err_t EventSendUserSignal(uint32_t sig_code, void *p_user_data) {
  */
 static void TranslateAndForwardSdlEvent(const SDL_Event *p_sdl_ev, uint8_t *p_quit_requested) {
     EventData_t app_ev;
+
+    /* Assert non-null internal helper pointers */
+    ASSERT_NOT_EQUAL(NULL, p_sdl_ev);
+    ASSERT_NOT_EQUAL(NULL, p_quit_requested);
 
     app_ev.Type        = EVENT_TYPE_NONE;
     app_ev.MouseX      = 0;

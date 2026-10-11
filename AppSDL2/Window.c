@@ -71,6 +71,7 @@ Err_t WindowResize(uint32_t width, uint32_t height);
 Err_t WindowShowYesNoDialog(const_str_t title, const_str_t message, uint8_t *p_is_yes);
 Err_t WindowUpdateAll(void);
 Err_t WindowQueuePush(WinActionCmd_t cmd, Comp_t *p_comp);
+Err_t WindowQueuePushMode(WinMode_t mode);
 Err_t WindowQueuePushResize(uint32_t width, uint32_t height);
 Err_t WindowQueueProcessAll(void);
 
@@ -206,18 +207,26 @@ Err_t WindowInit(const_str_t title, uint32_t width, uint32_t height) {
     /* Initialize SDL_ttf subsystem if available */
     (void)TTF_Init();
 
-    /* Create resizable SDL2 main window */
+    /* Set X11 window type hint to dialog so tiling WMs (e.g. bspwm/i3) float the window */
+    (void)SDL_SetHint("SDL_VIDEO_X11_NET_WM_WINDOW_TYPE", "_NET_WM_WINDOW_TYPE_DIALOG");
+
+    /* Create floating SDL2 main window (without SDL_WINDOW_RESIZABLE so tiling WMs float it) */
     p_win = SDL_CreateWindow(title,
                              SDL_WINDOWPOS_CENTERED,
                              SDL_WINDOWPOS_CENTERED,
                              (int)width,
                              (int)height,
-                             SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
+                             SDL_WINDOW_SHOWN);
     if (NULL == p_win) {
         APP_ERR("SDL_CreateWindow failed: %s", SDL_GetError());
         SDL_Quit();
         return APP_ERROR_INIT_FAILED;
     }
+
+    /* Lock min/max size to initial floating dimensions so tiling WMs keep it floating */
+    SDL_SetWindowMinimumSize(p_win, (int)width, (int)height);
+    SDL_SetWindowMaximumSize(p_win, (int)width, (int)height);
+    SDL_SetWindowResizable(p_win, SDL_FALSE);
 
     /* Create hardware-accelerated or software fallback SDL2 renderer */
     p_ren = SDL_CreateRenderer(p_win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
@@ -241,6 +250,7 @@ Err_t WindowInit(const_str_t title, uint32_t width, uint32_t height) {
     g_MainWindow.p_SdlWindow   = (void *)p_win;
     g_MainWindow.p_SdlRenderer = (void *)p_ren;
     g_MainWindow.p_UiMutex     = (void *)SDL_CreateMutex();
+    ASSERT_NOT_EQUAL(NULL, g_MainWindow.p_UiMutex);
 
     /* Reset all layers in g_MainWindow */
     for (idx = 0U; idx < APP_SDL2_MAX_LAYERS; idx++) {
@@ -259,14 +269,17 @@ Err_t WindowInit(const_str_t title, uint32_t width, uint32_t height) {
     }
 
     /* Initialize circular queue for UI update actions (allow_overwrite = 1U) */
-    (void)CircleQueueInit(&g_MainWindowUpdateQueue.Queue,
-                          g_MainWindowUpdateQueue.Actions,
-                          (uint32_t)sizeof(WinUpdateAction_t),
-                          APP_SDL2_MAX_QUEUE_ACTIONS,
-                          1U);
+    ASSERT_EQUAL(APP_SUCCESS,
+                 CircleQueueInit(&g_MainWindowUpdateQueue.Queue,
+                                 g_MainWindowUpdateQueue.Actions,
+                                 (uint32_t)sizeof(WinUpdateAction_t),
+                                 APP_SDL2_MAX_QUEUE_ACTIONS,
+                                 1U));
     g_MainWindowUpdateQueue.p_Mutex         = (void *)SDL_CreateMutex();
     g_MainWindowUpdateQueue.p_Cond          = (void *)SDL_CreateCond();
     g_MainWindowUpdateQueue.WakeupEventType = SDL_RegisterEvents(1);
+    ASSERT_NOT_EQUAL(NULL, g_MainWindowUpdateQueue.p_Mutex);
+    ASSERT_NOT_EQUAL(NULL, g_MainWindowUpdateQueue.p_Cond);
 
     /* Return success after initializing main window */
     return APP_SUCCESS;
@@ -424,7 +437,7 @@ Err_t WindowToggle(void) {
 /* Switch the main window display mode between floating and maximized
  * @param mode[in] Target window mode (WIN_MODE_FLOATING or WIN_MODE_MAXIMIZED)
  * @return APP_SUCCESS on success, or APP_ERROR_INVALID_PARAM
- * @note Calls SDL_MaximizeWindow or SDL_RestoreWindow
+ * @note Works across both standard stacking WMs and tiling WMs (e.g. bspwm/i3)
  */
 Err_t WindowSetMode(WinMode_t mode) {
     SDL_Window *p_win = (SDL_Window *)g_MainWindow.p_SdlWindow;
@@ -435,12 +448,31 @@ Err_t WindowSetMode(WinMode_t mode) {
             g_MainWindow.Mode = WIN_MODE_FLOATING;
             if (NULL != p_win) {
                 SDL_RestoreWindow(p_win);
+                SDL_SetWindowMinimumSize(p_win, (int)g_MainWindow.Width, (int)g_MainWindow.Height);
+                SDL_SetWindowMaximumSize(p_win, (int)g_MainWindow.Width, (int)g_MainWindow.Height);
+                SDL_SetWindowSize(p_win, (int)g_MainWindow.Width, (int)g_MainWindow.Height);
+                SDL_SetWindowResizable(p_win, SDL_FALSE);
+                SDL_SetWindowPosition(p_win, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
             }
             /* Break after restoring floating window */
             break;
         case WIN_MODE_MAXIMIZED:
             g_MainWindow.Mode = WIN_MODE_MAXIMIZED;
             if (NULL != p_win) {
+                SDL_Rect usable_bounds;
+                int      disp_idx = SDL_GetWindowDisplayIndex(p_win);
+
+                if (disp_idx < 0) {
+                    disp_idx = 0;
+                }
+                SDL_SetWindowResizable(p_win, SDL_TRUE);
+                SDL_SetWindowMinimumSize(p_win, (int)g_MainWindow.Width, (int)g_MainWindow.Height);
+                SDL_SetWindowMaximumSize(p_win, 16384, 16384);
+                /* Expand floating window to fill usable desktop bounds (supports bspwm/tiling WMs) */
+                if (0 == SDL_GetDisplayUsableBounds(disp_idx, &usable_bounds)) {
+                    SDL_SetWindowPosition(p_win, usable_bounds.x, usable_bounds.y);
+                    SDL_SetWindowSize(p_win, usable_bounds.w, usable_bounds.h);
+                }
                 SDL_MaximizeWindow(p_win);
             }
             /* Break after maximizing window */
@@ -474,6 +506,10 @@ Err_t WindowResize(uint32_t width, uint32_t height) {
 
     /* Resize SDL window if initialized */
     if (NULL != g_MainWindow.p_SdlWindow) {
+        SDL_SetWindowMinimumSize((SDL_Window *)g_MainWindow.p_SdlWindow, (int)width, (int)height);
+        if (WIN_MODE_FLOATING == g_MainWindow.Mode) {
+            SDL_SetWindowMaximumSize((SDL_Window *)g_MainWindow.p_SdlWindow, (int)width, (int)height);
+        }
         SDL_SetWindowSize((SDL_Window *)g_MainWindow.p_SdlWindow, (int)width, (int)height);
     }
 
@@ -621,6 +657,53 @@ Err_t WindowQueuePush(WinActionCmd_t cmd, Comp_t *p_comp) {
     (void)WindowWakeupMainThread();
 
     /* Return success after queuing action */
+    return APP_SUCCESS;
+}
+
+/* Push a window mode change action from a sub-thread into g_MainWindowUpdateQueue and wake main thread
+ * @param mode[in] Target window mode (WIN_MODE_FLOATING or WIN_MODE_MAXIMIZED)
+ * @return APP_SUCCESS on success, or error status
+ * @note Ensures SDL2 window mode changes execute safely on the main thread
+ */
+Err_t WindowQueuePushMode(WinMode_t mode) {
+    WinUpdateAction_t action;
+    Err_t             err;
+
+    #if (1U == PARAM_CHECK_EN)
+    /* Validate mode enum */
+    if ((WIN_MODE_FLOATING != mode) && (WIN_MODE_MAXIMIZED != mode)) {
+        APP_ERR("Invalid window mode in WindowQueuePushMode!");
+        return APP_ERROR_INVALID_PARAM;
+    }
+    #endif /* (1U == PARAM_CHECK_EN) */
+
+    action.Type.Raw          = 0ULL;
+    action.Type.ModeCfg.Cmd  = WIN_ACTION_SET_MODE;
+    action.Type.ModeCfg.Mode = mode;
+    action.p_Comp            = NULL;
+
+    /* Lock queue mutex */
+    if (NULL != g_MainWindowUpdateQueue.p_Mutex) {
+        (void)SDL_LockMutex((SDL_mutex *)g_MainWindowUpdateQueue.p_Mutex);
+    }
+
+    /* Push mode action into circular queue (overwrites oldest if full) */
+    err = CircleQueuePush(&g_MainWindowUpdateQueue.Queue, &action);
+
+    /* Unlock queue mutex */
+    if (NULL != g_MainWindowUpdateQueue.p_Mutex) {
+        (void)SDL_UnlockMutex((SDL_mutex *)g_MainWindowUpdateQueue.p_Mutex);
+    }
+
+    /* Return error if push failed */
+    if (APP_SUCCESS != err) {
+        return err;
+    }
+
+    /* Wake up sleeping main thread */
+    (void)WindowWakeupMainThread();
+
+    /* Return success after queuing mode action */
     return APP_SUCCESS;
 }
 

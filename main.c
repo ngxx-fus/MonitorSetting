@@ -86,11 +86,9 @@ static int  MiscBackgroundThreadEntry(void *p_arg);
 static void OnCardDragStart(Comp_t *p_comp, const EventData_t *p_event) {
     Color_t active_border = { .w = 0xFFFFFF00U };
 
-    /* Check if component and event pointers are valid */
-    if ((NULL == p_comp) || (NULL == p_event)) {
-        /* Abort callback on NULL pointer */
-        return;
-    }
+    /* Assert component and event pointers are non-NULL */
+    ASSERT_NOT_EQUAL(NULL, p_comp);
+    ASSERT_NOT_EQUAL(NULL, p_event);
 
     /* Lock UI briefly to update border style */
     (void)WindowLockUI();
@@ -112,11 +110,9 @@ static void OnCardDragStart(Comp_t *p_comp, const EventData_t *p_event) {
 static void OnCardDrop(Comp_t *p_comp, const EventData_t *p_event) {
     Color_t normal_border = { .w = 0xFFFFFFFFU };
 
-    /* Check if component and event pointers are valid */
-    if ((NULL == p_comp) || (NULL == p_event)) {
-        /* Abort callback on NULL pointer */
-        return;
-    }
+    /* Assert component and event pointers are non-NULL */
+    ASSERT_NOT_EQUAL(NULL, p_comp);
+    ASSERT_NOT_EQUAL(NULL, p_event);
 
     /* Lock UI briefly to restore default white border */
     (void)WindowLockUI();
@@ -138,11 +134,9 @@ static void OnCardDrop(Comp_t *p_comp, const EventData_t *p_event) {
  * @note Logs periodic monitor status check
  */
 static void OnMonitorEvent(Comp_t *p_comp, const EventData_t *p_event) {
-    /* Validate pointers before logging */
-    if ((NULL == p_comp) || (NULL == p_event)) {
-        /* Return early on NULL pointer */
-        return;
-    }
+    /* Assert component and event pointers are non-NULL */
+    ASSERT_NOT_EQUAL(NULL, p_comp);
+    ASSERT_NOT_EQUAL(NULL, p_event);
 
     APP_INFO("Monitor listener on '%s' received SysCode=%u",
              p_comp->Label, p_event->SysCode);
@@ -157,11 +151,9 @@ static void OnMonitorEvent(Comp_t *p_comp, const EventData_t *p_event) {
  * @note Demonstrates custom user signal handling
  */
 static void OnUserSignalEvent(Comp_t *p_comp, const EventData_t *p_event) {
-    /* Validate pointers before logging */
-    if ((NULL == p_comp) || (NULL == p_event)) {
-        /* Return early on NULL pointer */
-        return;
-    }
+    /* Assert component and event pointers are non-NULL */
+    ASSERT_NOT_EQUAL(NULL, p_comp);
+    ASSERT_NOT_EQUAL(NULL, p_event);
 
     APP_INFO("Custom user signal received on '%s' (sig_code=%u)",
              p_comp->Label, p_event->SysCode);
@@ -178,16 +170,17 @@ static void OnUserSignalEvent(Comp_t *p_comp, const EventData_t *p_event) {
 static void OnBtnModeClick(Comp_t *p_comp, const EventData_t *p_event) {
     WinMode_t next_mode;
 
-    (void)p_comp;
-    (void)p_event;
+    /* Assert button and event pointers are non-NULL */
+    ASSERT_NOT_EQUAL(NULL, p_comp);
+    ASSERT_NOT_EQUAL(NULL, p_event);
 
     next_mode = (WIN_MODE_FLOATING == g_MainWindow.Mode) ? WIN_MODE_MAXIMIZED : WIN_MODE_FLOATING;
-    /* Apply new window mode */
-    (void)WindowSetMode(next_mode);
+    /* Queue window mode switch to be executed on the main thread */
+    (void)WindowQueuePushMode(next_mode);
     /* Also emit a custom user signal to demonstrate EVENT_TYPE_USER_SIGNAL */
     (void)EventSendUserSignal(100U + (uint32_t)next_mode, NULL);
 
-    /* Return after toggling window mode */
+    /* Return after queuing window mode toggle */
     return;
 }
 
@@ -198,16 +191,18 @@ static void OnBtnModeClick(Comp_t *p_comp, const EventData_t *p_event) {
  */
 static void OnBtnYesNoClick(Comp_t *p_comp, const EventData_t *p_event) {
     uint8_t is_yes = 0U;
+    Err_t   err;
 
-    (void)p_comp;
-    (void)p_event;
+    /* Assert button and event pointers are non-NULL */
+    ASSERT_NOT_EQUAL(NULL, p_comp);
+    ASSERT_NOT_EQUAL(NULL, p_event);
 
     /* Show quick Yes/No confirmation dialog */
-    if (APP_SUCCESS == WindowShowYesNoDialog("Apply Monitor Layout?",
-                                             "Do you want to apply the selected monitor configuration?",
-                                             &is_yes)) {
-        APP_INFO("Quick Yes/No Dialog result: %s", (0U != is_yes) ? "YES" : "NO");
-    }
+    err = WindowShowYesNoDialog("Apply Monitor Layout?",
+                                "Do you want to apply the selected monitor configuration?",
+                                &is_yes);
+    ASSERT_EQUAL(APP_SUCCESS, err);
+    APP_INFO("Quick Yes/No Dialog result: %s", (0U != is_yes) ? "YES" : "NO");
 
     /* Return after dialog closes */
     return;
@@ -221,11 +216,8 @@ static void OnBtnYesNoClick(Comp_t *p_comp, const EventData_t *p_event) {
 static int MiscBackgroundThreadEntry(void *p_arg) {
     MiscThreadCtx_t *p_ctx = (MiscThreadCtx_t *)p_arg;
 
-    /* Validate thread context pointer */
-    if (NULL == p_ctx) {
-        /* Exit thread if context is NULL */
-        return -1;
-    }
+    /* Assert thread context pointer is non-NULL */
+    ASSERT_NOT_EQUAL(NULL, p_ctx);
 
     /* Execute periodic background tasks while application is running */
     while (0U != p_ctx->IsRunning) {
@@ -304,7 +296,7 @@ int main(int argc, char *argv[]) {
     /* Layer 0 components: Background panel, divider line, status circle, status text, 2 buttons */
     Comp_t         layer0_comps[6];
     /* Layer 1 components: Two draggable monitor selection cards */
-    Comp_t         layer1_comps[2];
+    Comp_t         layer1_comps[3];
     /* Layer 2 components: Scrollable layer containing a table component */
     Comp_t         layer2_comps[1];
 
@@ -317,14 +309,19 @@ int main(int argc, char *argv[]) {
     ExtComp_t      card1_ext_item;
     ExtCompList_t  card1_ext_list;
 
+    CompTextCfg_t  card2_title_cfg;
+    ExtComp_t      card2_ext_item;
+    ExtCompList_t  card2_ext_list;
+
     /* Event listener slots for cards and buttons */
     CompEvent_t    card0_events[4];
     CompEvent_t    card1_events[2];
+    CompEvent_t    card2_events[2];
     CompEvent_t    btn_mode_event;
     CompEvent_t    btn_yesno_event;
 
-    (void)argc;
-    (void)argv;
+    PARAMETTER_NOT_USED(argc);
+    PARAMETTER_NOT_USED(argv);
 
     /* 0. Enforce single instance: if already running, toggle the 1st instance window and exit */
     err = WindowEnsureSingleInstance(&is_primary);
@@ -335,10 +332,7 @@ int main(int argc, char *argv[]) {
 
     /* 1. Initialize main SDL2 window, renderer, UI mutex, and wakeup event */
     err = WindowInit("MonitorSelection - AppSDL2 Demo (ESC to Quit)", DEMO_WIN_WIDTH, DEMO_WIN_HEIGHT);
-    if (APP_SUCCESS != err) {
-        APP_ERR("WindowInit failed with status: %s", Err2Str(err));
-        return -1;
-    }
+    ASSERT_EQUAL(APP_SUCCESS, err);
 
     /* 2. Configure Layer 0 (Base UI elements + Action Buttons) */
     {
@@ -380,10 +374,12 @@ int main(int argc, char *argv[]) {
 
     /* 3. Configure Layer 1 (Draggable Monitor Cards with p_ExtComps and Event Listeners) */
     {
-        CompDim_t card0_dim = { .W = 240U, .H = 130U, .OffsetX = 80,  .OffsetY = 110, .Rotation = 0U };
-        CompDim_t card1_dim = { .W = 240U, .H = 130U, .OffsetX = 380, .OffsetY = 110, .Rotation = 0U };
+        CompDim_t card0_dim = { .W = 220U, .H = 120U, .OffsetX = 50,  .OffsetY = 110, .Rotation = 0U };
+        CompDim_t card1_dim = { .W = 220U, .H = 120U, .OffsetX = 290, .OffsetY = 110, .Rotation = 0U };
+        CompDim_t card2_dim = { .W = 220U, .H = 120U, .OffsetX = 530, .OffsetY = 110, .Rotation = 0U };
         Color_t   card0_col = { .w = 0xDD1E4E8CU };
         Color_t   card1_col = { .w = 0xDD2B6CB0U };
+        Color_t   card2_col = { .w = 0xDD2C7A7BU };
         Color_t   white_col = { .w = 0xFFFFFFFFU };
 
         /* Draggable Card 0: Monitor 1 */
@@ -394,9 +390,9 @@ int main(int argc, char *argv[]) {
 
         /* Attach child text label to Card 0 via p_ExtComps */
         card0_title_cfg.Color        = white_col;
-        card0_title_cfg.Dim.OffsetX  = card0_dim.OffsetX + 24;
-        card0_title_cfg.Dim.OffsetY  = card0_dim.OffsetY + 58;
-        card0_title_cfg.Dim.W        = 200U;
+        card0_title_cfg.Dim.OffsetX  = card0_dim.OffsetX + 16;
+        card0_title_cfg.Dim.OffsetY  = card0_dim.OffsetY + 52;
+        card0_title_cfg.Dim.W        = 190U;
         card0_title_cfg.Dim.H        = 16U;
         card0_title_cfg.Dim.Rotation = 0U;
         card0_title_cfg.TextStr      = "[Monitor 1: HDMI-1 1920x1080]";
@@ -428,9 +424,9 @@ int main(int argc, char *argv[]) {
 
         /* Attach child text label to Card 1 via p_ExtComps */
         card1_title_cfg.Color        = white_col;
-        card1_title_cfg.Dim.OffsetX  = card1_dim.OffsetX + 24;
-        card1_title_cfg.Dim.OffsetY  = card1_dim.OffsetY + 58;
-        card1_title_cfg.Dim.W        = 200U;
+        card1_title_cfg.Dim.OffsetX  = card1_dim.OffsetX + 16;
+        card1_title_cfg.Dim.OffsetY  = card1_dim.OffsetY + 52;
+        card1_title_cfg.Dim.W        = 190U;
         card1_title_cfg.Dim.H        = 16U;
         card1_title_cfg.Dim.Rotation = 0U;
         card1_title_cfg.TextStr      = "[Monitor 2: DP-1 2560x1440]";
@@ -450,8 +446,38 @@ int main(int argc, char *argv[]) {
         layer1_comps[1].Listeners.Count     = 2U;
         layer1_comps[1].Listeners.p_Events  = card1_events;
 
+        /* Draggable Card 2: Monitor 3 */
+        (void)CompInitRect(&layer1_comps[2], "MonitorCard_3", card2_dim, card2_col, 8U, 1U);
+        (void)CompSetBorder(&layer1_comps[2], 1U, white_col);
+        layer1_comps[2].Class       = COMP_CLASS_BUTTON;
+        layer1_comps[2].IsDraggable = 1U;
+
+        /* Attach child text label to Card 2 via p_ExtComps */
+        card2_title_cfg.Color        = white_col;
+        card2_title_cfg.Dim.OffsetX  = card2_dim.OffsetX + 16;
+        card2_title_cfg.Dim.OffsetY  = card2_dim.OffsetY + 52;
+        card2_title_cfg.Dim.W        = 190U;
+        card2_title_cfg.Dim.H        = 16U;
+        card2_title_cfg.Dim.Rotation = 0U;
+        card2_title_cfg.TextStr      = "[Monitor 3: USB-C 3840x2160]";
+        card2_title_cfg.FontSize     = 14U;
+
+        card2_ext_item.CastType       = COMP_CAST_TEXT;
+        card2_ext_item.CompPtr.p_Text = &card2_title_cfg;
+        card2_ext_list.Count          = 1U;
+        card2_ext_list.p_ExtComps     = &card2_ext_item;
+        layer1_comps[2].p_ExtComps    = &card2_ext_list;
+
+        /* Attach listeners to Card 2 */
+        card2_events[0].Listener.Type       = EVENT_TYPE_DRAG_START;
+        card2_events[0].Listener.p_CallBack = OnCardDragStart;
+        card2_events[1].Listener.Type       = EVENT_TYPE_DROP;
+        card2_events[1].Listener.p_CallBack = OnCardDrop;
+        layer1_comps[2].Listeners.Count     = 2U;
+        layer1_comps[2].Listeners.p_Events  = card2_events;
+
         g_MainWindow.Layers[1].IsVisible = 1U;
-        g_MainWindow.Layers[1].CompCount = 2U;
+        g_MainWindow.Layers[1].CompCount = 3U;
         g_MainWindow.Layers[1].p_Comps   = layer1_comps;
     }
 
@@ -478,11 +504,7 @@ int main(int argc, char *argv[]) {
 
     /* 6. Start Sub-Thread 1: Dedicated Event Listener Thread (sleeps until events arrive) */
     err = EventListenerThreadStart();
-    if (APP_SUCCESS != err) {
-        APP_ERR("Failed to start EventListenerThread: %s", Err2Str(err));
-        (void)WindowDeinit();
-        return -1;
-    }
+    ASSERT_EQUAL(APP_SUCCESS, err);
 
     /* 7. Start Sub-Thread 2: Miscellaneous Background Thread with sleep/wakeup condition */
     g_MiscCtx.IsRunning      = 1U;
@@ -492,6 +514,7 @@ int main(int argc, char *argv[]) {
     g_MiscCtx.p_StatusText   = &layer0_comps[3];
     g_MiscCtx.TickCount      = 0U;
     p_misc_thread = SDL_CreateThread(MiscBackgroundThreadEntry, "MiscBackgroundThread", &g_MiscCtx);
+    ASSERT_NOT_EQUAL(NULL, p_misc_thread);
 
     APP_INFO("Main loop started. Running ./main again in another terminal will toggle this window.");
 

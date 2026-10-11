@@ -113,6 +113,7 @@ Err_t WindowResize(uint32_t width, uint32_t height);
 Err_t WindowShowYesNoDialog(const_str_t title, const_str_t message, uint8_t *p_is_yes);
 Err_t WindowUpdateAll(void);
 Err_t WindowQueuePush(WinActionCmd_t cmd, Comp_t *p_comp);
+Err_t WindowQueuePushMode(WinMode_t mode);
 Err_t WindowQueuePushResize(uint32_t width, uint32_t height);
 Err_t WindowQueueProcessAll(void);
 

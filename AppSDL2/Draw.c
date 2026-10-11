@@ -522,6 +522,11 @@ Err_t DrawLayer(const Layer_t *p_layer) {
         has_rect_clip = 1U;
     }
 
+    /* Assert that component array pointer is valid when CompCount > 0 */
+    if (p_layer->CompCount > 0U) {
+        ASSERT_NOT_EQUAL(NULL, p_layer->p_Comps);
+    }
+
     /* Iterate through all components in the layer to render them in order */
     for (comp_idx = 0U; comp_idx < p_layer->CompCount; comp_idx++) {
         /* Draw current component relative to Layer (0,0) */

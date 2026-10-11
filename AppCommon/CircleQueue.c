@@ -147,6 +147,9 @@ Err_t CircleQueuePush(CircleQueue_t *p_queue, const void *p_elem) {
         p_queue->Count = p_queue->Capacity - 1U;
     }
 
+    /* Assert internal ring-buffer Tail invariant before writing memory */
+    ASSERT_LESS_THAN(p_queue->Tail, p_queue->Capacity);
+
     /* Calculate byte address of the Tail slot and copy the new element */
     p_dst = (uint8_t *)p_queue->p_Buffer + (p_queue->Tail * p_queue->ElemSize);
     (void)memcpy(p_dst, p_elem, (size_t)p_queue->ElemSize);
@@ -187,6 +190,9 @@ Err_t CircleQueuePop(CircleQueue_t *p_queue, void *p_elem_out) {
         /* Return queue empty status without logging an error (normal polling condition) */
         return APP_ERROR_QUEUE_EMPTY;
     }
+
+    /* Assert internal ring-buffer Head invariant before reading memory */
+    ASSERT_LESS_THAN(p_queue->Head, p_queue->Capacity);
 
     /* Calculate byte address of the Head slot and copy the oldest element out */
     p_src = (const uint8_t *)p_queue->p_Buffer + (p_queue->Head * p_queue->ElemSize);

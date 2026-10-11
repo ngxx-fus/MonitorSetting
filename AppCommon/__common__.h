@@ -8,9 +8,18 @@
 #include "stdio.h"
 #include "stdint.h"
 #include "stdarg.h"
+#include "./Assert.h"
 
 /* macros *****************************************************************************************
  **************************************************************************************************/
+
+#ifndef PARAM_CHECK_EN
+    #ifdef APP_PARAM_CHECK
+        #define PARAM_CHECK_EN  APP_PARAM_CHECK
+    #else
+        #define PARAM_CHECK_EN  (0U)
+    #endif
+#endif /* PARAM_CHECK_EN */
 
 #ifndef LOG_ENGINE
     #define LOG_ENGINE(...) printf(__VA_ARGS__) /* from stdio.h */

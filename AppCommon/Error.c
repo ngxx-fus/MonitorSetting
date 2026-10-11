@@ -3,6 +3,8 @@
 
 #include "__common__.h"
 #include "Error.h"
+#include "./Log.h"
+#include <stdlib.h>
 
 /* macros *****************************************************************************************
  **************************************************************************************************/
@@ -41,6 +43,7 @@ const char * gp_Err2Str [] = {
  **************************************************************************************************/
 
 const char * Err2Str(Err_t err);
+void         DefaultErrorHandler(void);
 
  /* private functions ******************************************************************************
  **************************************************************************************************/
@@ -71,6 +74,14 @@ const char * Err2Str(Err_t err) {
 
     /* Return the corresponding string from the error table */
     return gp_Err2Str[idx];
+}
+
+/* Fatal error trap handler invoked when an assertion fails
+ * @note Logs fatal error message and terminates the process with EXIT_FAILURE
+ */
+void DefaultErrorHandler(void) {
+    APP_ERR("Fatal error trapped in DefaultErrorHandler! Aborting application.");
+    exit(EXIT_FAILURE);
 }
 
 /* reserved ***************************************************************************************
