@@ -17,10 +17,10 @@
 #define UINT16(n)   ((uint16_t)(n))
 #define UINT8(n)    ((uint8_t)(n))
 
-#define MASK64U(n)  UINT64(0xFFFFFFFFFFFFFFFFLLU >> (64-((n)&0x3F)))
-#define MASK32U(n)  UINT32(          0xFFFFFFFFU >> (32-((n)&0x1F)))
-#define MASK16U(n)  UINT16(          0xFFFFFFFFU >> (16-((n)&0xF )))
-#define MASK8U(n)   UINT8 (          0xFFFFFFFFU >> (8 -((n)&0x7 )))
+#define MASK64U(n)  (((n) >= 64U) ? UINT64(0xFFFFFFFFFFFFFFFFULL) : (((n) == 0U) ? UINT64(0U) : UINT64(0xFFFFFFFFFFFFFFFFULL >> (64U - (n)))))
+#define MASK32U(n)  (((n) >= 32U) ? UINT32(0xFFFFFFFFU)           : (((n) == 0U) ? UINT32(0U) : UINT32(0xFFFFFFFFU           >> (32U - (n)))))
+#define MASK16U(n)  (((n) >= 16U) ? UINT16(0xFFFFU)               : (((n) == 0U) ? UINT16(0U) : UINT16(0xFFFFU               >> (16U - (n)))))
+#define MASK8U(n)   (((n) >= 8U)  ? UINT8(0xFFU)                  : (((n) == 0U) ? UINT8(0U)  : UINT8 (0xFFU                 >> (8U  - (n)))))
 
 #define BIT64U(pos)                 (UINT64(1ULL) << ((pos) & 0x3FU))
 #define BIT32U(pos)                 (UINT32(1U)   << ((pos) & 0x1FU))

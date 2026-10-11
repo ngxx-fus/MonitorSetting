@@ -44,9 +44,29 @@ const char * Err2Str(Err_t err);
 /* function implementations ***********************************************************************
  **************************************************************************************************/
 
+/* Convert an error code to its corresponding string representation
+ * @param err[in] Error status code to convert
+ * @return Pointer to the constant error description string
+ * @note Returns "Unknown error code" if err is out of range
+ */
 const char * Err2Str(Err_t err) {
-    if(UINT32(err) > UINT32(APP_STAT_NUM) )
-    return gp_Err2Str[err];
+    uint32_t idx;
+
+    /* Check if status is APP_SUCCESS or an error with bit 31 set */
+    if (APP_SUCCESS == err) {
+        idx = 0U;
+    } else if (0U != (UINT32(err) & 0x80000000U)) {
+        idx = (UINT32(err) & 0x7FFFFFFFU) + 1U;
+        /* Clamp index to APP_STAT_NUM if out of valid range */
+        if (idx >= UINT32(APP_STAT_NUM)) {
+            idx = UINT32(APP_STAT_NUM);
+        }
+    } else {
+        idx = UINT32(APP_STAT_NUM);
+    }
+
+    /* Return the corresponding string from the error table */
+    return gp_Err2Str[idx];
 }
 
 /* reserved ***************************************************************************************
