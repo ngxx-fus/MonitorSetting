@@ -223,6 +223,8 @@ Err_t CompScrollTable(Comp_t *p_comp, int32_t delta_x, int32_t delta_y);
 Err_t LayerSetScrollable(Layer_t *p_layer, CompDim_t rect_clip, uint8_t is_scrollable);
 Err_t LayerScroll(Layer_t *p_layer, int32_t delta_x, int32_t delta_y);
 Err_t CompHitTest(const Comp_t *p_comp, int32_t x, int32_t y, uint8_t *p_is_hit);
+Err_t CompCheckOverlap(const CompDim_t *p_dims, uint32_t count, uint8_t *p_is_overlap);
+Err_t CompSnapMagnetsTogether(CompDim_t *p_dims, uint32_t count, uint32_t threshold);
 
 /* reserved ***************************************************************************************
  **************************************************************************************************/

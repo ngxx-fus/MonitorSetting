@@ -291,20 +291,23 @@ Err_t EventHandleDragDrop(Layer_t *p_layers, uint32_t layer_count, const EventDa
             (void)WindowQueuePush(WIN_ACTION_UPDATE_ALL, g_DragDropCtx.p_DraggedComp);
         }
     } else if ((EVENT_TYPE_MOUSE_UP == p_event->Type) && (0U != g_DragDropCtx.IsDragging)) {
-        /* Assert dragged component pointer is valid before completing drop operation */
-        ASSERT_NOT_EQUAL(NULL, g_DragDropCtx.p_DraggedComp);
-        drag_ev      = *p_event;
-        drag_ev.Type = EVENT_TYPE_DROP;
-        /* Notify dragged component that drop occurred */
-        (void)EventDispatchToComp(g_DragDropCtx.p_DraggedComp, &drag_ev);
+        Comp_t *p_dropped_comp = g_DragDropCtx.p_DraggedComp;
 
-        /* Queue final window update on g_MainWindowUpdateQueue (wakes main thread) */
-        (void)WindowQueuePush(WIN_ACTION_UPDATE_ALL, g_DragDropCtx.p_DraggedComp);
+        /* Assert dragged component pointer is valid before completing drop operation */
+        ASSERT_NOT_EQUAL(NULL, p_dropped_comp);
 
         g_DragDropCtx.IsDragging       = 0U;
         g_DragDropCtx.p_DraggedComp    = NULL;
         g_DragDropCtx.p_DropTargetComp = NULL;
         gp_DraggedLayer                = NULL;
+
+        drag_ev      = *p_event;
+        drag_ev.Type = EVENT_TYPE_DROP;
+        /* Notify dragged component that drop occurred */
+        (void)EventDispatchToComp(p_dropped_comp, &drag_ev);
+
+        /* Queue final window update on g_MainWindowUpdateQueue (wakes main thread) */
+        (void)WindowQueuePush(WIN_ACTION_UPDATE_ALL, p_dropped_comp);
     } else {
         /* No drag-and-drop action required for other event types */
     }

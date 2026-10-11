@@ -65,7 +65,10 @@
                 |---Action1
                 ...
         ```
-        * Support drag/drop component (currently i have no idea, AI will help me add it!)
+        * Support drag/drop component with magnetic snapping and overlap prevention:
+            + Prevent overlapping between sibling cards/components (push apart along minimum penetration axis).
+            + Edge snapping: snap adjacent horizontal/vertical edges together when distance is within `threshold`.
+            + Corner (vertex) snapping: snap any pair of corners (vertices) together when both X and Y distances are within `threshold` without causing overlap.
         * Layer*.Comp*: Shall a struct
         * Layer*.Comp*.Type: Shall a union
         * Layer*.Comp*.Listeners.Event*: Shall a union

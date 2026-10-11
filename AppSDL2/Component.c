@@ -45,9 +45,15 @@ Err_t CompScrollTable(Comp_t *p_comp, int32_t delta_x, int32_t delta_y);
 Err_t LayerSetScrollable(Layer_t *p_layer, CompDim_t viewport, uint8_t is_scrollable);
 Err_t LayerScroll(Layer_t *p_layer, int32_t delta_x, int32_t delta_y);
 Err_t CompHitTest(const Comp_t *p_comp, int32_t x, int32_t y, uint8_t *p_is_hit);
+Err_t CompCheckOverlap(const CompDim_t *p_dims, uint32_t count, uint8_t *p_is_overlap);
+Err_t CompSnapMagnetsTogether(CompDim_t *p_dims, uint32_t count, uint32_t threshold);
 
 /* private functions ******************************************************************************
  **************************************************************************************************/
+
+static int32_t AbsInt32(int32_t val);
+static uint8_t IsPairOverlap(const CompDim_t *p_a, const CompDim_t *p_b);
+static void    ResolveAllOverlaps(CompDim_t *p_dims, uint32_t count);
 
 /* function implementations ***********************************************************************
  **************************************************************************************************/
@@ -589,6 +595,325 @@ Err_t CompHitTest(const Comp_t *p_comp, int32_t x, int32_t y, uint8_t *p_is_hit)
     }
 
     /* Return hit-test completion status */
+    return APP_SUCCESS;
+}
+
+/* Compute absolute value of a signed 32-bit integer
+ * @param val[in] Signed 32-bit value
+ * @return Non-negative absolute value
+ */
+static int32_t AbsInt32(int32_t val) {
+    /* Negate value if negative */
+    if (val < 0) {
+        /* Return negated positive value */
+        return -val;
+    }
+    /* Return non-negative value directly */
+    return val;
+}
+
+/* Check whether two rectangular CompDim_t bounds strictly overlap in interior area
+ * @param p_a[in] First rectangle dimension
+ * @param p_b[in] Second rectangle dimension
+ * @return 1U if rectangles strictly overlap, 0U if separated or touching edge-to-edge
+ */
+static uint8_t IsPairOverlap(const CompDim_t *p_a, const CompDim_t *p_b) {
+    /* Check intersection along both X and Y axes */
+    if ((p_a->OffsetX < (p_b->OffsetX + (int32_t)p_b->W)) &&
+        ((p_a->OffsetX + (int32_t)p_a->W) > p_b->OffsetX) &&
+        (p_a->OffsetY < (p_b->OffsetY + (int32_t)p_b->H)) &&
+        ((p_a->OffsetY + (int32_t)p_a->H) > p_b->OffsetY)) {
+        /* Return 1U when interior areas intersect */
+        return 1U;
+    }
+    /* Return 0U when no overlap exists */
+    return 0U;
+}
+
+/* Push overlapping rectangles apart along their minimum penetration axis until no pairs overlap
+ * @param p_dims[in/out] Array of component dimensions to separate
+ * @param count[in] Number of elements in p_dims
+ */
+static void ResolveAllOverlaps(CompDim_t *p_dims, uint32_t count) {
+    uint32_t pass;
+    uint32_t i;
+    uint32_t j;
+
+    /* Run up to 4 relaxation passes to resolve multi-card chain overlaps */
+    for (pass = 0U; pass < 4U; pass++) {
+        uint8_t any_resolved = 0U;
+
+        /* Iterate over all first cards i */
+        for (i = 0U; i < (count - 1U); i++) {
+            /* Iterate over all second cards j > i */
+            for (j = i + 1U; j < count; j++) {
+                /* Check if pair (i, j) currently overlaps */
+                if (0U != IsPairOverlap(&p_dims[i], &p_dims[j])) {
+                    int32_t ax1 = p_dims[i].OffsetX;
+                    int32_t ay1 = p_dims[i].OffsetY;
+                    int32_t ax2 = ax1 + (int32_t)p_dims[i].W;
+                    int32_t ay2 = ay1 + (int32_t)p_dims[i].H;
+                    int32_t bx1 = p_dims[j].OffsetX;
+                    int32_t by1 = p_dims[j].OffsetY;
+                    int32_t bx2 = bx1 + (int32_t)p_dims[j].W;
+                    int32_t by2 = by1 + (int32_t)p_dims[j].H;
+
+                    int32_t ov_x = ((ax2 < bx2) ? ax2 : bx2) - ((ax1 > bx1) ? ax1 : bx1);
+                    int32_t ov_y = ((ay2 < by2) ? ay2 : by2) - ((ay1 > by1) ? ay1 : by1);
+                    int32_t acx  = ax1 + ((int32_t)p_dims[i].W / 2);
+                    int32_t acy  = ay1 + ((int32_t)p_dims[i].H / 2);
+                    int32_t bcx  = bx1 + ((int32_t)p_dims[j].W / 2);
+                    int32_t bcy  = by1 + ((int32_t)p_dims[j].H / 2);
+
+                    /* Push card j out along the axis of minimum penetration */
+                    if (ov_x <= ov_y) {
+                        /* Separate horizontally to left or right edge of card i */
+                        if (bcx >= acx) {
+                            p_dims[j].OffsetX = ax2;
+                        } else {
+                            p_dims[j].OffsetX = ax1 - (int32_t)p_dims[j].W;
+                        }
+                    } else {
+                        /* Separate vertically to top or bottom edge of card i */
+                        if (bcy >= acy) {
+                            p_dims[j].OffsetY = ay2;
+                        } else {
+                            p_dims[j].OffsetY = ay1 - (int32_t)p_dims[j].H;
+                        }
+                    }
+                    any_resolved = 1U;
+                }
+            }
+        }
+
+        /* Stop early if no overlaps remained in this pass */
+        if (0U == any_resolved) {
+            /* Break out of relaxation loop */
+            break;
+        }
+    }
+
+    /* Return after resolving all overlaps */
+    return;
+}
+
+/* Check if any two component dimensions in an array overlap
+ * @param p_dims[in] Array of component dimensions
+ * @param count[in] Number of elements in p_dims
+ * @param p_is_overlap[out] Outputs 1U if at least one pair overlaps, 0U otherwise
+ * @return APP_SUCCESS on success, or APP_ERROR_NULL on NULL pointers
+ * @note Uses brute-force pairwise intersection check
+ */
+Err_t CompCheckOverlap(const CompDim_t *p_dims, uint32_t count, uint8_t *p_is_overlap) {
+    uint32_t i;
+    uint32_t j;
+
+    #if (1U == PARAM_CHECK_EN)
+    /* Validate input pointers */
+    if ((NULL == p_dims) || (NULL == p_is_overlap)) {
+        APP_ERR("Null pointer in CompCheckOverlap!");
+        return APP_ERROR_NULL;
+    }
+    #endif /* (1U == PARAM_CHECK_EN) */
+
+    *p_is_overlap = 0U;
+
+    /* Check if array has fewer than 2 items */
+    if (count < 2U) {
+        /* Cannot overlap with fewer than 2 items */
+        return APP_SUCCESS;
+    }
+
+    /* Iterate through all distinct pairs (i, j) */
+    for (i = 0U; i < (count - 1U); i++) {
+        /* Compare card i against every subsequent card j */
+        for (j = i + 1U; j < count; j++) {
+            /* Check if pair (i, j) intersects */
+            if (0U != IsPairOverlap(&p_dims[i], &p_dims[j])) {
+                *p_is_overlap = 1U;
+                /* Return immediately on first detected overlap */
+                return APP_SUCCESS;
+            }
+        }
+    }
+
+    /* Return success with no overlap found */
+    return APP_SUCCESS;
+}
+
+/* Resolve overlaps and magnetically snap edges or vertices (corners) within threshold distance
+ * @param p_dims[in/out] Array of component dimensions to snap and separate
+ * @param count[in] Number of elements in p_dims
+ * @param threshold[in] Maximum pixel distance for magnetic edge and corner snapping
+ * @return APP_SUCCESS on success, or APP_ERROR_NULL if p_dims is NULL
+ * @note Enforces 3 rules: (1) No overlap, (2) Corner-to-corner snap, (3) Edge-to-edge snap
+ */
+Err_t CompSnapMagnetsTogether(CompDim_t *p_dims, uint32_t count, uint32_t threshold) {
+    uint32_t i;
+    uint32_t j;
+    int32_t  thresh;
+
+    #if (1U == PARAM_CHECK_EN)
+    /* Validate dimension array pointer */
+    if (NULL == p_dims) {
+        APP_ERR("p_dims is NULL in CompSnapMagnetsTogether!");
+        return APP_ERROR_NULL;
+    }
+    #endif /* (1U == PARAM_CHECK_EN) */
+
+    /* Return early if fewer than 2 components are provided */
+    if (count < 2U) {
+        /* Nothing to snap when count < 2 */
+        return APP_SUCCESS;
+    }
+
+    thresh = (int32_t)threshold;
+
+    /* Step 1: Separate any overlapping pairs along minimum penetration axis */
+    ResolveAllOverlaps(p_dims, count);
+
+    /* Step 2: Apply magnetic corner (vertex) snapping and edge snapping for each pair */
+    for (i = 0U; i < (count - 1U); i++) {
+        /* Check card i against every subsequent card j */
+        for (j = i + 1U; j < count; j++) {
+            int32_t ax1 = p_dims[i].OffsetX;
+            int32_t ay1 = p_dims[i].OffsetY;
+            int32_t ax2 = ax1 + (int32_t)p_dims[i].W;
+            int32_t ay2 = ay1 + (int32_t)p_dims[i].H;
+
+            int32_t bx1 = p_dims[j].OffsetX;
+            int32_t by1 = p_dims[j].OffsetY;
+            int32_t bx2 = bx1 + (int32_t)p_dims[j].W;
+            int32_t by2 = by1 + (int32_t)p_dims[j].H;
+
+            /* 4 corners (vertices) of card i and card j: TL, TR, BL, BR */
+            int32_t  ax_v[4];
+            int32_t  ay_v[4];
+            int32_t  bx_v[4];
+            int32_t  by_v[4];
+            uint32_t ca;
+            uint32_t cb;
+            int32_t  best_dist      = (thresh * 2) + 1;
+            int32_t  best_dx        = 0;
+            int32_t  best_dy        = 0;
+            uint8_t  corner_snapped = 0U;
+
+            ax_v[0] = ax1; ay_v[0] = ay1;
+            ax_v[1] = ax2; ay_v[1] = ay1;
+            ax_v[2] = ax1; ay_v[2] = ay2;
+            ax_v[3] = ax2; ay_v[3] = ay2;
+
+            bx_v[0] = bx1; by_v[0] = by1;
+            bx_v[1] = bx2; by_v[1] = by1;
+            bx_v[2] = bx1; by_v[2] = by2;
+            bx_v[3] = bx2; by_v[3] = by2;
+
+            /* Step 2A: Check all 16 vertex (corner) pairs between card i and card j */
+            for (ca = 0U; ca < 4U; ca++) {
+                /* Compare corner ca of card i with corner cb of card j */
+                for (cb = 0U; cb < 4U; cb++) {
+                    int32_t dx   = ax_v[ca] - bx_v[cb];
+                    int32_t dy   = ay_v[ca] - by_v[cb];
+                    int32_t adx  = AbsInt32(dx);
+                    int32_t ady  = AbsInt32(dy);
+                    int32_t dist = adx + ady;
+
+                    /* Check if both X and Y corner distances are within threshold */
+                    if ((adx <= thresh) && (ady <= thresh) && (dist < best_dist)) {
+                        CompDim_t cand = p_dims[j];
+                        cand.OffsetX  += dx;
+                        cand.OffsetY  += dy;
+
+                        /* Only accept corner snap if it does not cause card j to overlap card i */
+                        if (0U == IsPairOverlap(&p_dims[i], &cand)) {
+                            best_dist      = dist;
+                            best_dx        = dx;
+                            best_dy        = dy;
+                            corner_snapped = 1U;
+                        }
+                    }
+                }
+            }
+
+            /* Apply vertex snap if a valid non-overlapping corner pair was within threshold */
+            if (0U != corner_snapped) {
+                p_dims[j].OffsetX += best_dx;
+                p_dims[j].OffsetY += best_dy;
+                /* Continue to next pair after snapping corners */
+                continue;
+            }
+
+            /* Step 2B: Edge-to-edge magnetic snapping when corners are further than threshold */
+            /* Check horizontal edge snap (Left of j to Right of i, or Right of j to Left of i) */
+            if (((ay1 - thresh) <= by2) && ((by1 - thresh) <= ay2)) {
+                /* Check if Left edge of j is near Right edge of i */
+                if (AbsInt32(bx1 - ax2) <= thresh) {
+                    p_dims[j].OffsetX = ax2;
+                    /* Also snap top or bottom alignment if within threshold */
+                    if (AbsInt32(by1 - ay1) <= thresh) {
+                        p_dims[j].OffsetY = ay1;
+                    } else if (AbsInt32(by2 - ay2) <= thresh) {
+                        p_dims[j].OffsetY = ay2 - (int32_t)p_dims[j].H;
+                    } else {
+                        /* Keep current vertical offset along edge */
+                    }
+                } else if (AbsInt32(bx2 - ax1) <= thresh) {
+                    /* Snap Right edge of j to Left edge of i */
+                    p_dims[j].OffsetX = ax1 - (int32_t)p_dims[j].W;
+                    /* Also snap top or bottom alignment if within threshold */
+                    if (AbsInt32(by1 - ay1) <= thresh) {
+                        p_dims[j].OffsetY = ay1;
+                    } else if (AbsInt32(by2 - ay2) <= thresh) {
+                        p_dims[j].OffsetY = ay2 - (int32_t)p_dims[j].H;
+                    } else {
+                        /* Keep current vertical offset along edge */
+                    }
+                } else {
+                    /* Horizontal edges are beyond threshold */
+                }
+            }
+
+            /* Refresh bx/by after potential horizontal edge snap */
+            bx1 = p_dims[j].OffsetX;
+            by1 = p_dims[j].OffsetY;
+            bx2 = bx1 + (int32_t)p_dims[j].W;
+            by2 = by1 + (int32_t)p_dims[j].H;
+
+            /* Check vertical edge snap (Top of j to Bottom of i, or Bottom of j to Top of i) */
+            if (((ax1 - thresh) <= bx2) && ((bx1 - thresh) <= ax2)) {
+                /* Check if Top edge of j is near Bottom edge of i */
+                if (AbsInt32(by1 - ay2) <= thresh) {
+                    p_dims[j].OffsetY = ay2;
+                    /* Also snap left or right alignment if within threshold */
+                    if (AbsInt32(bx1 - ax1) <= thresh) {
+                        p_dims[j].OffsetX = ax1;
+                    } else if (AbsInt32(bx2 - ax2) <= thresh) {
+                        p_dims[j].OffsetX = ax2 - (int32_t)p_dims[j].W;
+                    } else {
+                        /* Keep current horizontal offset along edge */
+                    }
+                } else if (AbsInt32(by2 - ay1) <= thresh) {
+                    /* Snap Bottom edge of j to Top edge of i */
+                    p_dims[j].OffsetY = ay1 - (int32_t)p_dims[j].H;
+                    /* Also snap left or right alignment if within threshold */
+                    if (AbsInt32(bx1 - ax1) <= thresh) {
+                        p_dims[j].OffsetX = ax1;
+                    } else if (AbsInt32(bx2 - ax2) <= thresh) {
+                        p_dims[j].OffsetX = ax2 - (int32_t)p_dims[j].W;
+                    } else {
+                        /* Keep current horizontal offset along edge */
+                    }
+                } else {
+                    /* Vertical edges are beyond threshold */
+                }
+            }
+        }
+    }
+
+    /* Step 3: Final overlap resolution pass in case snapping pushed a card into a 3rd card */
+    ResolveAllOverlaps(p_dims, count);
+
+    /* Return success after snapping and resolving all cards */
     return APP_SUCCESS;
 }
 

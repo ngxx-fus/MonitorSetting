@@ -25,6 +25,7 @@
 #define DEMO_MAX_COMPS_PER_LAYER        (6U)
 #define DEMO_CARD_COUNT                 (3U)
 #define DEMO_MAX_CARD_EVENTS            (4U)
+#define DEMO_SNAP_THRESHOLD_PX          (25U)
 
 /* definitions ************************************************************************************
  **************************************************************************************************/
@@ -39,6 +40,17 @@ struct MiscThreadCtx_st {
     uint32_t   TickCount;
 };
 typedef struct MiscThreadCtx_st MiscThreadCtx_t;
+
+/* Context passed to the Card Monitor sub-thread */
+struct CardMonitorCtx_st {
+    uint8_t        IsRunning;
+    SDL_mutex     *p_Mutex;
+    SDL_cond      *p_Cond;
+    Comp_t        *p_Cards;      /* Points to &g_LayerComps[1][0] */
+    CompTextCfg_t *p_CardTitles; /* Points to &g_CardTitle[0] */
+    uint32_t       CardCount;    /* DEMO_CARD_COUNT (3U) */
+};
+typedef struct CardMonitorCtx_st CardMonitorCtx_t;
 
 /* exported variables *****************************************************************************
  **************************************************************************************************/
@@ -57,6 +69,21 @@ static MiscThreadCtx_t g_MiscCtx = {
     .p_StatusText   = NULL,
     .TickCount      = 0U
 };
+
+static CardMonitorCtx_t g_CardMonCtx = {
+    .IsRunning    = 0U,
+    .p_Mutex      = NULL,
+    .p_Cond       = NULL,
+    .p_Cards      = NULL,
+    .p_CardTitles = NULL,
+    .CardCount    = 0U
+};
+
+/* Dynamic text buffers for the 3 monitor cards */
+static char g_CardDynamicText[DEMO_CARD_COUNT][64];
+
+/* Index of the most recently dragged/dropped card so it snaps against stationary cards */
+static uint32_t g_LastMovedCardIdx = (DEMO_CARD_COUNT - 1U);
 
 static char g_StatusMsgBuf[80] = "Background Tick: 0 | Drag cards, click buttons, or scroll";
 
@@ -90,6 +117,9 @@ static void OnMonitorEvent(Comp_t *p_comp, const EventData_t *p_event);
 static void OnUserSignalEvent(Comp_t *p_comp, const EventData_t *p_event);
 static void OnBtnModeClick(Comp_t *p_comp, const EventData_t *p_event);
 static void OnBtnYesNoClick(Comp_t *p_comp, const EventData_t *p_event);
+static int  IsOverlap(CompDim_t card[], uint32_t num);
+static void MakeSnapMagnetsTogether(CompDim_t card[], uint32_t num, uint32_t threshold);
+static int  CardMonitorThreadEntry(void *p_arg);
 static void InitDemoLayers(void);
 static void InitDemoComponents(void);
 static void BindDemoEvents(void);
@@ -101,17 +131,25 @@ static int  MiscBackgroundThreadEntry(void *p_arg);
 /* Callback invoked when user starts dragging a draggable card component
  * @param p_comp[in/out] Component being dragged
  * @param p_event[in] Drag start event details
- * @note Highlights the border color in yellow while dragging (protected by WindowLockUI)
+ * @note Highlights the border color in yellow while dragging and records g_LastMovedCardIdx
  */
 static void OnCardDragStart(Comp_t *p_comp, const EventData_t *p_event) {
-    Color_t active_border = { .w = 0xFFFFFF00U };
+    Color_t  active_border = { .w = 0xFFFFFF00U };
+    uint32_t idx;
 
     /* Assert component and event pointers are non-NULL */
     ASSERT_NOT_EQUAL(NULL, p_comp);
     ASSERT_NOT_EQUAL(NULL, p_event);
 
-    /* Lock UI briefly to update border style */
+    /* Lock UI briefly to update border style and identify which card was grabbed */
     (void)WindowLockUI();
+    for (idx = 0U; idx < DEMO_CARD_COUNT; idx++) {
+        if (&g_LayerComps[1][idx] == p_comp) {
+            g_LastMovedCardIdx = idx;
+            /* Break once matching card index is found */
+            break;
+        }
+    }
     (void)CompSetBorder(p_comp, 2U, active_border);
     (void)WindowUnlockUI();
 
@@ -125,19 +163,34 @@ static void OnCardDragStart(Comp_t *p_comp, const EventData_t *p_event) {
 /* Callback invoked when user drops a dragged card component
  * @param p_comp[in/out] Component that was dropped
  * @param p_event[in] Drop event details
- * @note Restores border color to white after drop (protected by WindowLockUI)
+ * @note Restores border color to white and immediately wakes CardMonitorThread to snap/resolve
  */
 static void OnCardDrop(Comp_t *p_comp, const EventData_t *p_event) {
-    Color_t normal_border = { .w = 0xFFFFFFFFU };
+    Color_t  normal_border = { .w = 0xFFFFFFFFU };
+    uint32_t idx;
 
     /* Assert component and event pointers are non-NULL */
     ASSERT_NOT_EQUAL(NULL, p_comp);
     ASSERT_NOT_EQUAL(NULL, p_event);
 
-    /* Lock UI briefly to restore default white border */
+    /* Lock UI briefly to restore default white border and record dropped card index */
     (void)WindowLockUI();
+    for (idx = 0U; idx < DEMO_CARD_COUNT; idx++) {
+        if (&g_LayerComps[1][idx] == p_comp) {
+            g_LastMovedCardIdx = idx;
+            /* Break once matching card index is found */
+            break;
+        }
+    }
     (void)CompSetBorder(p_comp, 1U, normal_border);
     (void)WindowUnlockUI();
+
+    /* Wake up CardMonitorThread immediately so edge/corner snapping runs with zero lag */
+    if ((NULL != g_CardMonCtx.p_Mutex) && (NULL != g_CardMonCtx.p_Cond)) {
+        (void)SDL_LockMutex(g_CardMonCtx.p_Mutex);
+        (void)SDL_CondBroadcast(g_CardMonCtx.p_Cond);
+        (void)SDL_UnlockMutex(g_CardMonCtx.p_Mutex);
+    }
 
     APP_INFO("Dropped '%s' at new offset (%d, %d)",
              p_comp->Label,
@@ -228,12 +281,153 @@ static void OnBtnYesNoClick(Comp_t *p_comp, const EventData_t *p_event) {
     return;
 }
 
+/* Check if any two components in the array overlap
+ * @param card[in] Array of component dimensions
+ * @param num[in] Number of elements in card[]
+ * @return 1 if any two cards overlap, 0 otherwise
+ * @note Delegates to AppSDL2 CompCheckOverlap
+ */
+static int IsOverlap(CompDim_t card[], uint32_t num) {
+    uint8_t is_overlap = 0U;
+
+    /* Check boundary cases before calling CompCheckOverlap */
+    if ((NULL == card) || (num < 2U)) {
+        /* Insufficient elements to overlap */
+        return 0;
+    }
+
+    /* Call AppSDL2 overlap check API */
+    (void)CompCheckOverlap(card, num, &is_overlap);
+
+    /* Return integer overlap flag */
+    return (int)is_overlap;
+}
+
+/* Prevent card overlap and magnetically snap edges or corners (vertices) within threshold
+ * @param card[in/out] Array of card dimensions to resolve and snap
+ * @param num[in] Number of elements in card[]
+ * @param threshold[in] Maximum pixel distance for edge and corner magnetic snapping
+ * @note Places g_LastMovedCardIdx at the end of the solve order so the moved card snaps to stationary cards
+ */
+static void MakeSnapMagnetsTogether(CompDim_t card[], uint32_t num, uint32_t threshold) {
+    uint32_t  moved_idx;
+    CompDim_t tmp_dim;
+
+    /* Validate input array and minimum card count */
+    if ((NULL == card) || (num < 2U)) {
+        /* Nothing to snap when array is NULL or has fewer than 2 cards */
+        return;
+    }
+
+    moved_idx = (g_LastMovedCardIdx < num) ? g_LastMovedCardIdx : (num - 1U);
+
+    /* Swap the most recently moved card to index (num - 1) so stationary cards act as anchors */
+    if (moved_idx != (num - 1U)) {
+        tmp_dim           = card[num - 1U];
+        card[num - 1U]    = card[moved_idx];
+        card[moved_idx]   = tmp_dim;
+    }
+
+    /* Run AppSDL2 overlap resolution + corner snapping + edge snapping */
+    (void)CompSnapMagnetsTogether(card, num, threshold);
+
+    /* Restore original card array ordering after solving */
+    if (moved_idx != (num - 1U)) {
+        tmp_dim           = card[num - 1U];
+        card[num - 1U]    = card[moved_idx];
+        card[moved_idx]   = tmp_dim;
+    }
+
+    /* Return after snapping and resolving card positions */
+    return;
+}
+
+/* Sub-thread monitoring the 3 cards: prevents overlap, snaps edges/corners, and updates card labels
+ * @param p_arg[in] Pointer to CardMonitorCtx_t
+ * @return Thread exit status (0)
+ * @note Wakes up every 100ms or immediately when OnCardDrop signals g_CardMonCtx.p_Cond
+ */
+static int CardMonitorThreadEntry(void *p_arg) {
+    CardMonitorCtx_t *p_ctx = (CardMonitorCtx_t *)p_arg;
+    CompDim_t         card_dims[DEMO_CARD_COUNT];
+    uint32_t          idx;
+    int               has_overlap;
+
+    /* Assert thread context pointer is valid */
+    ASSERT_NOT_EQUAL(NULL, p_ctx);
+
+    /* Loop until main thread sets IsRunning = 0U */
+    while (0U != p_ctx->IsRunning) {
+        /* 1. Sleep for 100ms or until woken immediately by OnCardDrop / shutdown */
+        (void)SDL_LockMutex(p_ctx->p_Mutex);
+        if (0U != p_ctx->IsRunning) {
+            (void)SDL_CondWaitTimeout(p_ctx->p_Cond, p_ctx->p_Mutex, 100U);
+        }
+        (void)SDL_UnlockMutex(p_ctx->p_Mutex);
+
+        /* Exit immediately if shutdown was requested */
+        if (0U == p_ctx->IsRunning) {
+            /* Break out of monitoring loop */
+            break;
+        }
+
+        /* 2. Lock UI mutex before inspecting and snapping the 3 cards */
+        (void)WindowLockUI();
+
+        /* Copy current card dimensions into local array */
+        for (idx = 0U; idx < p_ctx->CardCount; idx++) {
+            card_dims[idx] = p_ctx->p_Cards[idx].Type.Rect.Dim;
+        }
+
+        /* When user is not actively dragging, resolve overlaps and snap edges/corners */
+        if (0U == g_DragDropCtx.IsDragging) {
+            MakeSnapMagnetsTogether(card_dims, p_ctx->CardCount, DEMO_SNAP_THRESHOLD_PX);
+
+            /* Apply snapped coordinates back to each card and its child text via CompSetPosition */
+            for (idx = 0U; idx < p_ctx->CardCount; idx++) {
+                if ((card_dims[idx].OffsetX != p_ctx->p_Cards[idx].Type.Rect.Dim.OffsetX) ||
+                    (card_dims[idx].OffsetY != p_ctx->p_Cards[idx].Type.Rect.Dim.OffsetY)) {
+                    (void)CompSetPosition(&p_ctx->p_Cards[idx],
+                                          card_dims[idx].OffsetX,
+                                          card_dims[idx].OffsetY);
+                }
+            }
+        }
+
+        /* Check if any cards are overlapping (while dragging) */
+        has_overlap = IsOverlap(card_dims, p_ctx->CardCount);
+
+        /* Update each card's multi-line text with live coordinates and overlap status */
+        for (idx = 0U; idx < p_ctx->CardCount; idx++) {
+            Comp_t        *p_card  = &p_ctx->p_Cards[idx];
+            CompTextCfg_t *p_title = &p_ctx->p_CardTitles[idx];
+
+            (void)snprintf(g_CardDynamicText[idx],
+                           sizeof(g_CardDynamicText[idx]),
+                           "[Monitor %u]\nPos: (%d, %d)\n%s",
+                           idx + 1U,
+                           p_card->Type.Rect.Dim.OffsetX,
+                           p_card->Type.Rect.Dim.OffsetY,
+                           (0 != has_overlap) ? "OVERLAP!" : "SNAP OK");
+            p_title->TextStr = g_CardDynamicText[idx];
+        }
+
+        (void)WindowUnlockUI();
+
+        /* 3. Enqueue redraw request to wake up Main Thread */
+        (void)WindowQueuePush(WIN_ACTION_UPDATE_ALL, NULL);
+    }
+
+    /* Return 0 when thread terminates */
+    return 0;
+}
+
 /* Step 1: Initialize all 3 layers in g_MainWindow and attach their component arrays
  * @note Layer 2 is configured with a scrollable RectClip relative to MainWindow (0, 0)
  */
 static void InitDemoLayers(void) {
     /* Layer 2 viewport (RectClip) is positioned relative to (0, 0) of MainWindow */
-    CompDim_t layer1_clip = { .W = 700U, .H = 200U, .OffsetX = 50, .OffsetY = 100, .Rotation = 0 };
+    CompDim_t layer1_clip = { .W = 700U, .H = 350U, .OffsetX = 50, .OffsetY = 100, .Rotation = 0 };
     CompDim_t layer2_clip = { .W = 700U, .H = 180U, .OffsetX = 50, .OffsetY = 280, .Rotation = 0U };
 
     /* Layer 0: Base background panel, header line, status indicator, and 2 action buttons */
@@ -247,11 +441,9 @@ static void InitDemoLayers(void) {
     g_MainWindow.Layers[1].p_Comps   = g_LayerComps[1];
     (void)LayerSetScrollable(&g_MainWindow.Layers[1], layer1_clip, 1U);
 
-    /* Layer 2: Scrollable viewport layer containing the MonitorTable component */
-    g_MainWindow.Layers[2].IsVisible = 1U;
-    g_MainWindow.Layers[2].CompCount = 1U;
-    g_MainWindow.Layers[2].p_Comps   = g_LayerComps[2];
-    (void)LayerSetScrollable(&g_MainWindow.Layers[2], layer2_clip, 1U);
+    /* Layer 2: Scrollable viewport layer containing the MonitorTable component (currently disabled) */
+    PARAMETTER_NOT_USED(layer2_clip);
+    g_MainWindow.Layers[2].IsVisible = 0U;
 
     /* Return after configuring all layers */
     return;
@@ -524,6 +716,18 @@ int main(int argc, char *argv[]) {
     p_misc_thread = SDL_CreateThread(MiscBackgroundThreadEntry, "MiscBackgroundThread", &g_MiscCtx);
     ASSERT_NOT_EQUAL(NULL, p_misc_thread);
 
+    SDL_Thread *p_card_mon_thread      = NULL;
+    int         card_mon_thread_status = 0;
+    /* Start Sub-Thread 3: Card Monitor Thread */
+    g_CardMonCtx.IsRunning    = 1U;
+    g_CardMonCtx.p_Mutex      = SDL_CreateMutex();
+    g_CardMonCtx.p_Cond       = SDL_CreateCond();
+    g_CardMonCtx.p_Cards      = &g_LayerComps[1][0];
+    g_CardMonCtx.p_CardTitles = &g_CardTitle[0];
+    g_CardMonCtx.CardCount    = DEMO_CARD_COUNT;
+    p_card_mon_thread = SDL_CreateThread(CardMonitorThreadEntry, "CardMonitorThread", &g_CardMonCtx);
+    ASSERT_NOT_EQUAL(NULL, p_card_mon_thread);
+
     APP_INFO("Main loop started. Running ./main again in another terminal will toggle this window.");
 
     /* 6. Main Thread Loop: Sleep until woken by an OS event or a sub-thread queue wakeup */
@@ -560,9 +764,32 @@ int main(int argc, char *argv[]) {
         g_MiscCtx.p_Mutex = NULL;
     }
 
+    /* 8. Wake up and join CardMonitorThread cleanly */
+    if (NULL != g_CardMonCtx.p_Mutex) {
+        (void)SDL_LockMutex(g_CardMonCtx.p_Mutex);
+        g_CardMonCtx.IsRunning = 0U;
+        if (NULL != g_CardMonCtx.p_Cond) {
+            (void)SDL_CondBroadcast(g_CardMonCtx.p_Cond);
+        }
+        (void)SDL_UnlockMutex(g_CardMonCtx.p_Mutex);
+    } else {
+        g_CardMonCtx.IsRunning = 0U;
+    }
+    if (NULL != p_card_mon_thread) {
+        SDL_WaitThread(p_card_mon_thread, &card_mon_thread_status);
+    }
+    if (NULL != g_CardMonCtx.p_Cond) {
+        SDL_DestroyCond(g_CardMonCtx.p_Cond);
+        g_CardMonCtx.p_Cond = NULL;
+    }
+    if (NULL != g_CardMonCtx.p_Mutex) {
+        SDL_DestroyMutex(g_CardMonCtx.p_Mutex);
+        g_CardMonCtx.p_Mutex = NULL;
+    }
+
     /* Stop and wake up EventListenerThread */
     (void)EventListenerThreadStop();
-
+    
     /* Destroy SDL2 window and synchronization primitives */
     (void)WindowDeinit();
 
