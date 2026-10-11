@@ -31,7 +31,7 @@ DisplayPreferSettings:
     - Disp1:
         - Label:   "DP-2"
         - Enabled: 1
-        - Primary: 1
+        - Primary: 0
         - W:       1920
         - H:       1080
         - Freq:    60
@@ -42,7 +42,7 @@ DisplayPreferSettings:
     - Disp2:
         - Label:   "HDMI-1"
         - Enabled: 1
-        - Primary: 0
+        - Primary: 1
         - W:       1920
         - H:       1080
         - Freq:    100

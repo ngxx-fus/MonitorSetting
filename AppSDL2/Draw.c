@@ -14,18 +14,20 @@
 /* macros *****************************************************************************************
  **************************************************************************************************/
 
-#define DRAW_FONT_CACHE_MAX             (24U)
+#define DRAW_FONT_CACHE_MAX             (32U)
 #define DRAW_FONT_NAME_MAX              (128U)
 #define DRAW_FONT_PATH_MAX              (256U)
 
 /* definitions ************************************************************************************
  **************************************************************************************************/
 
-/* Cached SDL_ttf font entry keyed by (Name, Size) */
+/* Cached SDL_ttf font entry keyed by (Name, Size, IsBold, IsItalic) */
 struct FontCacheEntry_st {
     uint8_t   IsUsed;
     char      Name[DRAW_FONT_NAME_MAX];
     uint32_t  Size;
+    uint8_t   IsBold;
+    uint8_t   IsItalic;
     TTF_Font *p_Font;
 };
 typedef struct FontCacheEntry_st FontCacheEntry_t;
@@ -64,20 +66,35 @@ Err_t DrawLayer(const Layer_t *p_layer);
 /* private functions ******************************************************************************
  **************************************************************************************************/
 
-static void      ResolveFontFileViaFcMatch(const char *p_family, char *p_out_path, size_t out_len);
-static TTF_Font *GetCachedTtfFont(const_str_t font_name, uint32_t font_size);
+static void      ResolveFontFileViaFcMatch(const char *p_family,
+                                           uint8_t     is_bold,
+                                           uint8_t     is_italic,
+                                           char       *p_out_path,
+                                           size_t      out_len);
+static TTF_Font *GetCachedTtfFont(const_str_t font_name,
+                                  uint32_t    font_size,
+                                  uint8_t     is_bold,
+                                  uint8_t     is_italic);
 
 /* function implementations ***********************************************************************
  **************************************************************************************************/
 
-/* Resolve a font family name (e.g. "CodeNewRoman Nerd Font") to a .ttf/.otf file path via fc-match
+/* Resolve a font family name and style (Regular/Bold/Italic) to a .ttf/.otf path via fc-match
  * @param p_family[in] Font family name or direct file path
+ * @param is_bold[in] Non-zero to request bold weight from fontconfig
+ * @param is_italic[in] Non-zero to request italic slant from fontconfig
  * @param p_out_path[out] Resolved file path buffer
  * @param out_len[in] Size of p_out_path buffer
  */
-static void ResolveFontFileViaFcMatch(const char *p_family, char *p_out_path, size_t out_len) {
-    char  cmd[512];
-    FILE *p_pipe;
+static void ResolveFontFileViaFcMatch(const char *p_family,
+                                      uint8_t     is_bold,
+                                      uint8_t     is_italic,
+                                      char       *p_out_path,
+                                      size_t      out_len) {
+    char        cmd[512];
+    const char *p_weight = (0U != is_bold)   ? "bold"   : "regular";
+    const char *p_slant  = (0U != is_italic) ? "italic" : "roman";
+    FILE       *p_pipe;
 
     p_out_path[0] = '\0';
     if ((NULL == p_family) || ('\0' == p_family[0])) {
@@ -92,7 +109,12 @@ static void ResolveFontFileViaFcMatch(const char *p_family, char *p_out_path, si
         return;
     }
 
-    (void)snprintf(cmd, sizeof(cmd), "fc-match -f \"%%{file}\" \"%s\" 2>/dev/null", p_family);
+    (void)snprintf(cmd,
+                   sizeof(cmd),
+                   "fc-match -f \"%%{file}\" \"%s:weight=%s:slant=%s\" 2>/dev/null",
+                   p_family,
+                   p_weight,
+                   p_slant);
     p_pipe = popen(cmd, "r");
     if (NULL != p_pipe) {
         if (NULL != fgets(p_out_path, (int)out_len, p_pipe)) {
@@ -110,14 +132,21 @@ static void ResolveFontFileViaFcMatch(const char *p_family, char *p_out_path, si
     return;
 }
 
-/* Lookup or open a cached TTF_Font for the requested font family/path and pixel size
+/* Lookup or open a cached TTF_Font for the requested font family/path, pixel size, and style
  * @param font_name[in] Component-specific font name, or NULL/"" to use g_DefaultFontName
  * @param font_size[in] Font pixel size (defaults to 13 if 0)
+ * @param is_bold[in] Non-zero for bold style
+ * @param is_italic[in] Non-zero for italic style
  * @return Pointer to opened TTF_Font, or NULL if no TTF font is configured/available
  */
-static TTF_Font *GetCachedTtfFont(const_str_t font_name, uint32_t font_size) {
+static TTF_Font *GetCachedTtfFont(const_str_t font_name,
+                                  uint32_t    font_size,
+                                  uint8_t     is_bold,
+                                  uint8_t     is_italic) {
     const char *p_eff_name = NULL;
     uint32_t    eff_size   = (font_size > 0U) ? font_size : 13U;
+    uint8_t     eff_bold   = (0U != is_bold)   ? 1U : 0U;
+    uint8_t     eff_italic = (0U != is_italic) ? 1U : 0U;
     uint32_t    idx;
     uint32_t    free_slot  = DRAW_FONT_CACHE_MAX;
     char        font_path[DRAW_FONT_PATH_MAX];
@@ -141,10 +170,12 @@ static TTF_Font *GetCachedTtfFont(const_str_t font_name, uint32_t font_size) {
         }
     }
 
-    /* Check cache for an existing (Name, Size) entry */
+    /* Check cache for an existing (Name, Size, IsBold, IsItalic) entry */
     for (idx = 0U; idx < DRAW_FONT_CACHE_MAX; idx++) {
         if (0U != g_FontCache[idx].IsUsed) {
-            if ((g_FontCache[idx].Size == eff_size) &&
+            if ((g_FontCache[idx].Size     == eff_size)   &&
+                (g_FontCache[idx].IsBold   == eff_bold)   &&
+                (g_FontCache[idx].IsItalic == eff_italic) &&
                 (0 == strcmp(g_FontCache[idx].Name, p_eff_name))) {
                 /* Return cached TTF_Font pointer */
                 return g_FontCache[idx].p_Font;
@@ -156,21 +187,34 @@ static TTF_Font *GetCachedTtfFont(const_str_t font_name, uint32_t font_size) {
         }
     }
 
-    /* Resolve font family name to .ttf/.otf file path and open via SDL_ttf */
-    ResolveFontFileViaFcMatch(p_eff_name, font_path, sizeof(font_path));
+    /* Resolve font family name + weight/slant to .ttf/.otf file path and open via SDL_ttf */
+    ResolveFontFileViaFcMatch(p_eff_name, eff_bold, eff_italic, font_path, sizeof(font_path));
     if ('\0' != font_path[0]) {
         p_font = TTF_OpenFont(font_path, (int)eff_size);
         if (NULL != p_font) {
-            APP_INFO("Loaded TTF font '%s' (%u px) -> %s", p_eff_name, eff_size, font_path);
+            int face_style = TTF_GetFontStyle(p_font);
+            if (0U != eff_bold) {
+                face_style |= TTF_STYLE_BOLD;
+            }
+            if (0U != eff_italic) {
+                face_style |= TTF_STYLE_ITALIC;
+            }
+            if (TTF_GetFontStyle(p_font) != face_style) {
+                TTF_SetFontStyle(p_font, face_style);
+            }
+            APP_INFO("Loaded TTF font '%s' (%u px, bold=%u, italic=%u) -> %s",
+                     p_eff_name, eff_size, eff_bold, eff_italic, font_path);
         }
     }
 
     /* Store result in cache (even if NULL, to avoid re-running fc-match every frame) */
     if (free_slot < DRAW_FONT_CACHE_MAX) {
-        g_FontCache[free_slot].IsUsed = 1U;
+        g_FontCache[free_slot].IsUsed   = 1U;
         (void)snprintf(g_FontCache[free_slot].Name, sizeof(g_FontCache[free_slot].Name), "%s", p_eff_name);
-        g_FontCache[free_slot].Size   = eff_size;
-        g_FontCache[free_slot].p_Font = p_font;
+        g_FontCache[free_slot].Size     = eff_size;
+        g_FontCache[free_slot].IsBold   = eff_bold;
+        g_FontCache[free_slot].IsItalic = eff_italic;
+        g_FontCache[free_slot].p_Font   = p_font;
     }
 
     /* Return opened TTF_Font pointer */
@@ -452,23 +496,11 @@ Err_t DrawText(const CompTextCfg_t *p_text) {
         return APP_SUCCESS;
     }
 
-    /* Obtain cached TTF_Font for p_text->FontName (or Window default font) and p_text->FontSize */
-    p_ttf = GetCachedTtfFont(p_text->FontName, p_text->FontSize);
+    /* Obtain cached TTF_Font for (FontName, FontSize, IsBold, IsItalic) */
+    p_ttf = GetCachedTtfFont(p_text->FontName, p_text->FontSize, p_text->IsBold, p_text->IsItalic);
     if (NULL != p_ttf) {
-        int ttf_style = TTF_STYLE_NORMAL;
-        int adv_w     = 0;
-        int adv_h     = 0;
-
-        /* Apply Bold and Italic style flags from Format configuration */
-        if (0U != p_text->IsBold) {
-            ttf_style |= TTF_STYLE_BOLD;
-        }
-        if (0U != p_text->IsItalic) {
-            ttf_style |= TTF_STYLE_ITALIC;
-        }
-        if (TTF_GetFontStyle(p_ttf) != ttf_style) {
-            TTF_SetFontStyle(p_ttf, ttf_style);
-        }
+        int adv_w = 0;
+        int adv_h = 0;
 
         if ((0 == TTF_SizeUTF8(p_ttf, "M", &adv_w, &adv_h)) && (adv_w > 0)) {
             char_w  = adv_w;

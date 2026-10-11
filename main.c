@@ -160,8 +160,13 @@ int main(int argc, char *argv[]);
 /* private functions ******************************************************************************
  **************************************************************************************************/
 
-static void InitMonitorDataAndConfig(void);
-static void SyncCardModeIndicesFromCfg(uint32_t card_idx);
+static void                    InitMonitorDataAndConfig(void);
+static void                    SyncCardModeIndicesFromCfg(uint32_t card_idx);
+static const AppCompYamlCfg_t *GetLayer1CardYamlCfg(uint32_t card_idx);
+static void                    FormatMonitorTemplateStr(const char *p_fmt,
+                                                        uint32_t    card_idx,
+                                                        char       *p_out,
+                                                        size_t      out_cap);
 static void UpdateRelativePositionsAndTexts(void);
 static void UpdatePropertyPanelTexts(void);
 static void SelectMonitorCard(uint32_t card_idx);
@@ -315,6 +320,181 @@ static void InitMonitorDataAndConfig(void) {
     return;
 }
 
+/* Resolve the Layer 1 YAML component configuration for a monitor card, matching by Label first
+ * and falling back to unclaimed Comp slots in Layer 1
+ * @param card_idx[in] Monitor card index (0 .. DEMO_CARD_COUNT - 1)
+ * @return Pointer to matching AppCompYamlCfg_t in g_AppYamlCfg.Comps[1]
+ */
+static const AppCompYamlCfg_t *GetLayer1CardYamlCfg(uint32_t card_idx) {
+    uint32_t    j;
+    uint32_t    m;
+    uint32_t    unmatched_rank = 0U;
+    uint32_t    unclaimed_seen = 0U;
+    const char *p_want_label;
+
+    if (card_idx >= DEMO_CARD_COUNT) {
+        return &g_AppYamlCfg.Comps[1][0];
+    }
+
+    p_want_label = g_ActiveCfg.Cfgs[card_idx].Label;
+
+    /* 1. Try exact Label match against Layer 1 Comp0..Comp2 in app.yml */
+    if ('\0' != p_want_label[0]) {
+        for (j = 0U; j < DEMO_CARD_COUNT; j++) {
+            const AppCompYamlCfg_t *p_cc = &g_AppYamlCfg.Comps[1][j];
+            if ((0U != p_cc->HasLabel) && (0 == strcmp(p_cc->Label, p_want_label))) {
+                return p_cc;
+            }
+        }
+    }
+
+    /* 2. Count how many earlier cards (m < card_idx) also had no exact Label match */
+    for (m = 0U; m < card_idx; m++) {
+        uint8_t m_matched = 0U;
+        for (j = 0U; j < DEMO_CARD_COUNT; j++) {
+            const AppCompYamlCfg_t *p_cc = &g_AppYamlCfg.Comps[1][j];
+            if ((0U != p_cc->HasLabel) &&
+                ('\0' != g_ActiveCfg.Cfgs[m].Label[0]) &&
+                (0 == strcmp(p_cc->Label, g_ActiveCfg.Cfgs[m].Label))) {
+                m_matched = 1U;
+                break;
+            }
+        }
+        if (0U == m_matched) {
+            unmatched_rank++;
+        }
+    }
+
+    /* 3. Pick the unmatched_rank-th Comp slot in Layer 1 not claimed by any connected monitor */
+    for (j = 0U; j < DEMO_CARD_COUNT; j++) {
+        const AppCompYamlCfg_t *p_cc      = &g_AppYamlCfg.Comps[1][j];
+        uint8_t                 claimed   = 0U;
+
+        if ((0U != p_cc->HasLabel) && ('\0' != p_cc->Label[0])) {
+            for (m = 0U; m < DEMO_CARD_COUNT; m++) {
+                if (('\0' != g_ActiveCfg.Cfgs[m].Label[0]) &&
+                    (0 == strcmp(p_cc->Label, g_ActiveCfg.Cfgs[m].Label))) {
+                    claimed = 1U;
+                    break;
+                }
+            }
+        }
+
+        if (0U == claimed) {
+            if (unclaimed_seen == unmatched_rank) {
+                return p_cc;
+            }
+            unclaimed_seen++;
+        }
+    }
+
+    /* 4. Fallback to direct index */
+    return &g_AppYamlCfg.Comps[1][card_idx];
+}
+
+/* Expand a monitor text format template containing placeholders into an output buffer
+ * Supported placeholders:
+ *   <Label>   : Monitor label (e.g. "HDMI-1")
+ *   <Primary> : "*" if primary, "" otherwise
+ *   <Res>     : "<W>x<H>" when enabled, or "OFF" when disabled
+ *   <W>       : Width in pixels (e.g. "1920")
+ *   <H>       : Height in pixels (e.g. "1080")
+ *   <Freq>    : Refresh rate in Hz (e.g. "60")
+ *   <PosX>    : Relative display X coordinate (e.g. "0")
+ *   <PosY>    : Relative display Y coordinate (e.g. "1080")
+ *   <State>   : "ON" or "OFF"
+ * @param p_fmt[in]      Format template string (e.g. "<Label>\n<Res>@<Freq>\nPOS(<PosX>, <PosY>)")
+ * @param card_idx[in]   Monitor card index (0 .. DEMO_CARD_COUNT - 1)
+ * @param p_out[out]     Destination buffer
+ * @param out_cap[in]    Destination buffer capacity in bytes
+ */
+static void FormatMonitorTemplateStr(const char *p_fmt,
+                                     uint32_t    card_idx,
+                                     char       *p_out,
+                                     size_t      out_cap) {
+    const MonitorCfg_t *p_cfg;
+    const char         *p_cur;
+    size_t              out_len = 0U;
+    char                tok_buf[64];
+
+    /* Guard against NULL pointers or invalid index */
+    if ((NULL == p_fmt) || (NULL == p_out) || (0U == out_cap) || (card_idx >= DEMO_CARD_COUNT)) {
+        return;
+    }
+
+    p_cfg = &g_ActiveCfg.Cfgs[card_idx];
+    p_cur = p_fmt;
+
+    /* Scan format string and replace <Token> placeholders */
+    while (('\0' != *p_cur) && ((out_len + 1U) < out_cap)) {
+        const char *p_rep   = NULL;
+        size_t      tok_len = 0U;
+
+        if (0 == strncmp(p_cur, "<Label>", 7U)) {
+            p_rep   = p_cfg->Label;
+            tok_len = 7U;
+        } else if (0 == strncmp(p_cur, "<Primary>", 9U)) {
+            p_rep   = ((0U != p_cfg->IsEnabled) && (0U != p_cfg->IsPrimary)) ? "*" : "";
+            tok_len = 9U;
+        } else if (0 == strncmp(p_cur, "<Res>", 5U)) {
+            if (0U != p_cfg->IsEnabled) {
+                (void)snprintf(tok_buf, sizeof(tok_buf), "%ux%u", (uint32_t)p_cfg->W, (uint32_t)p_cfg->H);
+            } else {
+                (void)snprintf(tok_buf, sizeof(tok_buf), "OFF");
+            }
+            p_rep   = tok_buf;
+            tok_len = 5U;
+        } else if (0 == strncmp(p_cur, "<W>", 3U)) {
+            (void)snprintf(tok_buf, sizeof(tok_buf), "%u", (uint32_t)p_cfg->W);
+            p_rep   = tok_buf;
+            tok_len = 3U;
+        } else if (0 == strncmp(p_cur, "<H>", 3U)) {
+            (void)snprintf(tok_buf, sizeof(tok_buf), "%u", (uint32_t)p_cfg->H);
+            p_rep   = tok_buf;
+            tok_len = 3U;
+        } else if (0 == strncmp(p_cur, "<Freq>", 6U)) {
+            if (0U != p_cfg->IsEnabled) {
+                (void)snprintf(tok_buf, sizeof(tok_buf), "%u", (uint32_t)p_cfg->Freq);
+            } else {
+                (void)snprintf(tok_buf, sizeof(tok_buf), "-");
+            }
+            p_rep   = tok_buf;
+            tok_len = 6U;
+        } else if (0 == strncmp(p_cur, "<PosX>", 6U)) {
+            (void)snprintf(tok_buf, sizeof(tok_buf), "%d", g_CardRelPosX[card_idx]);
+            p_rep   = tok_buf;
+            tok_len = 6U;
+        } else if (0 == strncmp(p_cur, "<PosY>", 6U)) {
+            (void)snprintf(tok_buf, sizeof(tok_buf), "%d", g_CardRelPosY[card_idx]);
+            p_rep   = tok_buf;
+            tok_len = 6U;
+        } else if (0 == strncmp(p_cur, "<State>", 7U)) {
+            p_rep   = (0U != p_cfg->IsEnabled) ? "ON" : "OFF";
+            tok_len = 7U;
+        } else {
+            p_rep   = NULL;
+            tok_len = 0U;
+        }
+
+        if (NULL != p_rep) {
+            while (('\0' != *p_rep) && ((out_len + 1U) < out_cap)) {
+                p_out[out_len] = *p_rep;
+                out_len++;
+                p_rep++;
+            }
+            p_cur += tok_len;
+        } else {
+            p_out[out_len] = *p_cur;
+            out_len++;
+            p_cur++;
+        }
+    }
+    p_out[out_len] = '\0';
+
+    /* Return after expanding template placeholders */
+    return;
+}
+
 /* Refresh the right-side Property Panel texts and button colors for the currently selected card
  * @note Must be called with UI lock held or during single-threaded initialization
  */
@@ -324,14 +504,20 @@ static void UpdatePropertyPanelTexts(void) {
     const MonitorCfg_t       *p_cfg = &g_ActiveCfg.Cfgs[sel];
 
     /* Format Property Panel header title */
-    (void)snprintf(g_PropTitleBuf,
-                   sizeof(g_PropTitleBuf),
-                   "PROP: %s %s",
-                   p_mon->Label,
-                   (0U == p_cfg->IsEnabled) ? "[OFF]" : ((0U != p_cfg->IsPrimary) ? "[PRIMARY]" : ""));
+    if ((0U != g_AppYamlCfg.Comps[2][1].HasTextStrFmt) && ('\0' != g_AppYamlCfg.Comps[2][1].TextStrFmt[0])) {
+        FormatMonitorTemplateStr(g_AppYamlCfg.Comps[2][1].TextStrFmt, sel, g_PropTitleBuf, sizeof(g_PropTitleBuf));
+    } else {
+        (void)snprintf(g_PropTitleBuf,
+                       sizeof(g_PropTitleBuf),
+                       "PROP: %s %s",
+                       p_mon->Label,
+                       (0U == p_cfg->IsEnabled) ? "[OFF]" : ((0U != p_cfg->IsPrimary) ? "[PRIMARY]" : ""));
+    }
 
     /* Format Property Panel summary info (Index, Status, Relative POS, Mode count) */
-    if (0U != p_cfg->IsEnabled) {
+    if ((0U != g_AppYamlCfg.Comps[2][3].HasTextStrFmt) && ('\0' != g_AppYamlCfg.Comps[2][3].TextStrFmt[0])) {
+        FormatMonitorTemplateStr(g_AppYamlCfg.Comps[2][3].TextStrFmt, sel, g_PropInfoBuf, sizeof(g_PropInfoBuf));
+    } else if (0U != p_cfg->IsEnabled) {
         (void)snprintf(g_PropInfoBuf,
                        sizeof(g_PropInfoBuf),
                        "Display #%u (%s)\nRel POS: (%d, %d)\nModes: %u | Primary: %s",
@@ -350,17 +536,25 @@ static void UpdatePropertyPanelTexts(void) {
     }
 
     /* Format current resolution string */
-    (void)snprintf(g_PropResValBuf,
-                   sizeof(g_PropResValBuf),
-                   "Res: %ux%u",
-                   (uint32_t)p_cfg->W,
-                   (uint32_t)p_cfg->H);
+    if ((0U != g_AppYamlCfg.Comps[2][4].HasTextStrFmt) && ('\0' != g_AppYamlCfg.Comps[2][4].TextStrFmt[0])) {
+        FormatMonitorTemplateStr(g_AppYamlCfg.Comps[2][4].TextStrFmt, sel, g_PropResValBuf, sizeof(g_PropResValBuf));
+    } else {
+        (void)snprintf(g_PropResValBuf,
+                       sizeof(g_PropResValBuf),
+                       "Res: %ux%u",
+                       (uint32_t)p_cfg->W,
+                       (uint32_t)p_cfg->H);
+    }
 
     /* Format current refresh rate string */
-    (void)snprintf(g_PropFreqValBuf,
-                   sizeof(g_PropFreqValBuf),
-                   "Freq: %u Hz",
-                   (uint32_t)p_cfg->Freq);
+    if ((0U != g_AppYamlCfg.Comps[2][5].HasTextStrFmt) && ('\0' != g_AppYamlCfg.Comps[2][5].TextStrFmt[0])) {
+        FormatMonitorTemplateStr(g_AppYamlCfg.Comps[2][5].TextStrFmt, sel, g_PropFreqValBuf, sizeof(g_PropFreqValBuf));
+    } else {
+        (void)snprintf(g_PropFreqValBuf,
+                       sizeof(g_PropFreqValBuf),
+                       "Freq: %u Hz",
+                       (uint32_t)p_cfg->Freq);
+    }
 
     /* Update ON/OFF power toggle button label and background color (Comp [2][10]) */
     if (0U != p_cfg->IsEnabled) {
@@ -552,40 +746,56 @@ static void UpdateRelativePositionsAndTexts(void) {
     }
 
     for (idx = 0U; idx < DEMO_CARD_COUNT; idx++) {
+        const AppCompYamlCfg_t *p_card_cc = GetLayer1CardYamlCfg(idx);
+
         if (0U != g_ActiveCfg.Cfgs[idx].IsEnabled) {
-            g_ActiveCfg.Cfgs[idx].PosX                  = g_CardRelPosX[idx];
-            g_ActiveCfg.Cfgs[idx].PosY                  = g_CardRelPosY[idx];
-            g_LayerComps[1][idx].Type.Rect.Color        = g_CardActiveColors[idx];
-            g_CardTitle[idx].Color.w                    = 0xFFFFFFFFU;
-            (void)snprintf(g_CardDynamicText[idx],
-                           sizeof(g_CardDynamicText[idx]),
-                           "%s%s | %ux%u@%u\nPOS(%d, %d)",
-                           g_ActiveCfg.Cfgs[idx].Label,
-                           (0U != g_ActiveCfg.Cfgs[idx].IsPrimary) ? "*" : "",
-                           (uint32_t)g_ActiveCfg.Cfgs[idx].W,
-                           (uint32_t)g_ActiveCfg.Cfgs[idx].H,
-                           (uint32_t)g_ActiveCfg.Cfgs[idx].Freq,
-                           g_CardRelPosX[idx],
-                           g_CardRelPosY[idx]);
+            g_ActiveCfg.Cfgs[idx].PosX           = g_CardRelPosX[idx];
+            g_ActiveCfg.Cfgs[idx].PosY           = g_CardRelPosY[idx];
+            g_LayerComps[1][idx].Type.Rect.Color = g_CardActiveColors[idx];
+            g_CardTitle[idx].Color.w             = 0xFFFFFFFFU;
+            if ((0U != p_card_cc->HasTextStrFmt) && ('\0' != p_card_cc->TextStrFmt[0])) {
+                FormatMonitorTemplateStr(p_card_cc->TextStrFmt,
+                                         idx,
+                                         g_CardDynamicText[idx],
+                                         sizeof(g_CardDynamicText[idx]));
+            } else {
+                (void)snprintf(g_CardDynamicText[idx],
+                               sizeof(g_CardDynamicText[idx]),
+                               "%s%s | %ux%u@%u\nPOS(%d, %d)",
+                               g_ActiveCfg.Cfgs[idx].Label,
+                               (0U != g_ActiveCfg.Cfgs[idx].IsPrimary) ? "*" : "",
+                               (uint32_t)g_ActiveCfg.Cfgs[idx].W,
+                               (uint32_t)g_ActiveCfg.Cfgs[idx].H,
+                               (uint32_t)g_ActiveCfg.Cfgs[idx].Freq,
+                               g_CardRelPosX[idx],
+                               g_CardRelPosY[idx]);
+            }
         } else {
             /* Monitor is OFF: set card background color to pure dark black and show OFF state */
             int32_t off_rx = ((g_LayerComps[1][idx].Type.Rect.Dim.OffsetX - origin_x) *
                               (int32_t)g_ActiveCfg.Cfgs[origin_idx].W) / 155;
             int32_t off_ry = ((g_LayerComps[1][idx].Type.Rect.Dim.OffsetY - origin_y) *
                               (int32_t)g_ActiveCfg.Cfgs[origin_idx].H) / 95;
-            g_CardRelPosX[idx]                          = off_rx;
-            g_CardRelPosY[idx]                          = off_ry;
-            g_ActiveCfg.Cfgs[idx].PosX                  = off_rx;
-            g_ActiveCfg.Cfgs[idx].PosY                  = off_ry;
-            g_ActiveCfg.Cfgs[idx].IsPrimary             = 0U;
-            g_LayerComps[1][idx].Type.Rect.Color        = g_CardOffBlackColor;
-            g_CardTitle[idx].Color.w                    = 0xFFA0AEC0U;
-            (void)snprintf(g_CardDynamicText[idx],
-                           sizeof(g_CardDynamicText[idx]),
-                           "%s | OFF\nPOS(%d, %d)",
-                           g_ActiveCfg.Cfgs[idx].Label,
-                           off_rx,
-                           off_ry);
+            g_CardRelPosX[idx]                   = off_rx;
+            g_CardRelPosY[idx]                   = off_ry;
+            g_ActiveCfg.Cfgs[idx].PosX           = off_rx;
+            g_ActiveCfg.Cfgs[idx].PosY           = off_ry;
+            g_ActiveCfg.Cfgs[idx].IsPrimary      = 0U;
+            g_LayerComps[1][idx].Type.Rect.Color = g_CardOffBlackColor;
+            g_CardTitle[idx].Color.w             = 0xFFA0AEC0U;
+            if ((0U != p_card_cc->HasTextStrFmt) && ('\0' != p_card_cc->TextStrFmt[0])) {
+                FormatMonitorTemplateStr(p_card_cc->TextStrFmt,
+                                         idx,
+                                         g_CardDynamicText[idx],
+                                         sizeof(g_CardDynamicText[idx]));
+            } else {
+                (void)snprintf(g_CardDynamicText[idx],
+                               sizeof(g_CardDynamicText[idx]),
+                               "%s | OFF\nPOS(%d, %d)",
+                               g_ActiveCfg.Cfgs[idx].Label,
+                               off_rx,
+                               off_ry);
+            }
         }
         g_CardTitle[idx].TextStr = g_CardDynamicText[idx];
     }
@@ -1465,7 +1675,8 @@ static void InitDemoComponents(void) {
 
         for (l_idx = 0U; l_idx < USER_CFG_MAX_LAYERS; l_idx++) {
             for (c_idx = 0U; c_idx < g_MainWindow.Layers[l_idx].CompCount; c_idx++) {
-                const AppCompYamlCfg_t *p_cc   = &g_AppYamlCfg.Comps[l_idx][c_idx];
+                const AppCompYamlCfg_t *p_cc   = (1U == l_idx) ? GetLayer1CardYamlCfg(c_idx)
+                                                               : &g_AppYamlCfg.Comps[l_idx][c_idx];
                 Comp_t                 *p_comp = &g_LayerComps[l_idx][c_idx];
                 CompTextCfg_t          *p_txt  = NULL;
 
@@ -1513,6 +1724,22 @@ static void InitDemoComponents(void) {
                     }
                     if ((COMP_CAST_TEXT != p_comp->CastType) && (0U != p_cc->HasExtTextColor)) {
                         p_txt->Color.w = p_cc->ExtTextColor;
+                    }
+                    if ((1U != l_idx) && (0U != p_cc->HasTextStr) && ('\0' != p_cc->TextStr[0])) {
+                        if (p_txt->TextStr == g_StatusMsgBuf) {
+                            (void)snprintf(g_StatusMsgBuf,
+                                           sizeof(g_StatusMsgBuf),
+                                           "%.*s",
+                                           (int)(sizeof(g_StatusMsgBuf) - 1U),
+                                           p_cc->TextStr);
+                        } else if ((p_txt->TextStr != g_PropTitleBuf) &&
+                                   (p_txt->TextStr != g_PropInfoBuf) &&
+                                   (p_txt->TextStr != g_PropResValBuf) &&
+                                   (p_txt->TextStr != g_PropFreqValBuf) &&
+                                   (p_txt->TextStr != g_PropPowerBtnBuf) &&
+                                   (p_txt->TextStr != g_PropPrimaryBtnBuf)) {
+                            p_txt->TextStr = p_cc->TextStr;
+                        }
                     }
                 }
 
@@ -1773,6 +2000,9 @@ int main(int argc, char *argv[]) {
     /* 2. Initialize main SDL2 window, renderer, UI mutex, and wakeup event */
     err = WindowInit(g_AppYamlCfg.WinTitle, g_AppYamlCfg.WinW, g_AppYamlCfg.WinH);
     ASSERT_EQUAL(APP_SUCCESS, err);
+    if (0U != g_AppYamlCfg.WinHasColor) {
+        g_MainWindow.BgColor.w = g_AppYamlCfg.WinColor;
+    }
 
     /* 3. Initialize Layers -> Initialize Components -> Bind Events */
     InitDemoLayers();

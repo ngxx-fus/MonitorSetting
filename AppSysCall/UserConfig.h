@@ -63,11 +63,14 @@ struct AppCompYamlCfg_st {
     uint8_t  HasEndY;
     uint8_t  HasFontSize;
     uint8_t  HasFont;
+    uint8_t  HasTextStr;
+    uint8_t  HasTextStrFmt;
     uint8_t  HasBold;
     uint8_t  HasItalic;
     uint8_t  HasAlign;
     uint8_t  HasVAlign;
     uint8_t  HasVisible;
+    uint8_t  HasLabel;
     int32_t  OffsetX;
     int32_t  OffsetY;
     uint32_t W;
@@ -82,7 +85,10 @@ struct AppCompYamlCfg_st {
     int32_t  EndX;
     int32_t  EndY;
     uint16_t FontSize;
+    char     Label[32];
     char     Font[128];
+    char     TextStr[128];
+    char     TextStrFmt[128];
     uint8_t  IsBold;
     uint8_t  IsItalic;
     uint8_t  Align;                     /* 0 = LEFT, 1 = CENTER, 2 = RIGHT */
@@ -97,6 +103,8 @@ struct AppYamlConfig_st {
     uint32_t         SnapThresholdPx;
     char             WinTitle[128];
     char             WinFont[128];
+    uint8_t          WinHasColor;
+    uint32_t         WinColor;
     uint8_t          WinHasBold;
     uint8_t          WinIsBold;
     uint8_t          WinHasItalic;

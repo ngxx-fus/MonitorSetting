@@ -62,6 +62,7 @@ Err_t                   SysCallAppRunApplyCallbacks(const AppYamlConfig_t *p_app
 
 static char   *TrimLeading(char *p_str);
 static void    StripCommentAndNewline(char *p_line);
+static void    UnescapeYamlString(char *p_str);
 static int     ParseOptionalInt32(const char *p_val_str, int32_t *p_out_val);
 static uint8_t ParseHorizAlign(const char *p_val_str);
 static uint8_t ParseVertAlign(const char *p_val_str);
@@ -124,6 +125,31 @@ static void StripCommentAndNewline(char *p_line) {
     }
 
     /* Return after stripping comment and trailing whitespace */
+    return;
+}
+
+/* Convert escaped "\\n" and "\\t" sequences in a YAML string into actual newline/tab characters
+ * @param p_str[in/out] Mutable string to unescape in-place
+ */
+static void UnescapeYamlString(char *p_str) {
+    char *p_src = p_str;
+    char *p_dst = p_str;
+
+    /* Walk string and collapse backslash escape sequences */
+    while ('\0' != *p_src) {
+        if (('\\' == p_src[0]) && ('n' == p_src[1])) {
+            *p_dst++ = '\n';
+            p_src   += 2;
+        } else if (('\\' == p_src[0]) && ('t' == p_src[1])) {
+            *p_dst++ = '\t';
+            p_src   += 2;
+        } else {
+            *p_dst++ = *p_src++;
+        }
+    }
+    *p_dst = '\0';
+
+    /* Return after unescaping string in-place */
     return;
 }
 
@@ -680,6 +706,9 @@ Err_t SysCallAppConfigLoad(const_str_t path, AppYamlConfig_t *p_app_cfg) {
         } else if ((0U != in_main_win) && (0U == in_layers)) {
             if (0 == strcmp(p_key, "Title")) {
                 (void)snprintf(p_app_cfg->WinTitle, sizeof(p_app_cfg->WinTitle), "%s", p_val);
+            } else if (0 == strcmp(p_key, "Color")) {
+                p_app_cfg->WinColor    = (uint32_t)strtoul(p_val, NULL, 0);
+                p_app_cfg->WinHasColor = 1U;
             } else if (0 == strcmp(p_key, "Font")) {
                 (void)snprintf(p_app_cfg->WinFont, sizeof(p_app_cfg->WinFont), "%s", p_val);
             } else if (0 == strcmp(p_key, "Bold")) {
@@ -712,12 +741,40 @@ Err_t SysCallAppConfigLoad(const_str_t path, AppYamlConfig_t *p_app_cfg) {
                 in_sub_block = 0U;
             } else if ((cur_layer >= 0) && ((uint32_t)cur_layer < USER_CFG_MAX_LAYERS) &&
                        (cur_comp  >= 0) && ((uint32_t)cur_comp  < USER_CFG_MAX_COMPS)  &&
+                       (0 == strcmp(p_key, "Label"))) {
+                if ('\0' != p_val[0]) {
+                    AppCompYamlCfg_t *p_cc = &p_app_cfg->Comps[cur_layer][cur_comp];
+                    (void)snprintf(p_cc->Label, sizeof(p_cc->Label), "%s", p_val);
+                    p_cc->HasLabel = 1U;
+                }
+            } else if ((cur_layer >= 0) && ((uint32_t)cur_layer < USER_CFG_MAX_LAYERS) &&
+                       (cur_comp  >= 0) && ((uint32_t)cur_comp  < USER_CFG_MAX_COMPS)  &&
                        (0 == strcmp(p_key, "Font"))) {
                 /* Allow Font override under either Type: or ExtComps -> ExtComp0: */
                 if ('\0' != p_val[0]) {
                     AppCompYamlCfg_t *p_cc = &p_app_cfg->Comps[cur_layer][cur_comp];
                     (void)snprintf(p_cc->Font, sizeof(p_cc->Font), "%s", p_val);
                     p_cc->HasFont = 1U;
+                }
+            } else if ((cur_layer >= 0) && ((uint32_t)cur_layer < USER_CFG_MAX_LAYERS) &&
+                       (cur_comp  >= 0) && ((uint32_t)cur_comp  < USER_CFG_MAX_COMPS)  &&
+                       (0 == strcmp(p_key, "TextStrFmt"))) {
+                /* Allow TextStrFmt template under either Type: or ExtComps -> ExtComp0: */
+                if ('\0' != p_val[0]) {
+                    AppCompYamlCfg_t *p_cc = &p_app_cfg->Comps[cur_layer][cur_comp];
+                    (void)snprintf(p_cc->TextStrFmt, sizeof(p_cc->TextStrFmt), "%s", p_val);
+                    UnescapeYamlString(p_cc->TextStrFmt);
+                    p_cc->HasTextStrFmt = 1U;
+                }
+            } else if ((cur_layer >= 0) && ((uint32_t)cur_layer < USER_CFG_MAX_LAYERS) &&
+                       (cur_comp  >= 0) && ((uint32_t)cur_comp  < USER_CFG_MAX_COMPS)  &&
+                       (0 == strcmp(p_key, "TextStr"))) {
+                /* Allow TextStr override under either Type: or ExtComps -> ExtComp0: */
+                if ('\0' != p_val[0]) {
+                    AppCompYamlCfg_t *p_cc = &p_app_cfg->Comps[cur_layer][cur_comp];
+                    (void)snprintf(p_cc->TextStr, sizeof(p_cc->TextStr), "%s", p_val);
+                    UnescapeYamlString(p_cc->TextStr);
+                    p_cc->HasTextStr = 1U;
                 }
             } else if ((cur_layer >= 0) && ((uint32_t)cur_layer < USER_CFG_MAX_LAYERS) &&
                        (cur_comp  >= 0) && ((uint32_t)cur_comp  < USER_CFG_MAX_COMPS)  &&

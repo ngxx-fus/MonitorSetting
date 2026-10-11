@@ -32,6 +32,7 @@ MainWindow_t g_MainWindow = {
     .Title         = "MonitorSelection",
     .Width         = APP_SDL2_DEFAULT_WIN_W,
     .Height        = APP_SDL2_DEFAULT_WIN_H,
+    .BgColor       = { .w = 0xFF12161FU },
     .IsVisible     = 0U,
     .Mode          = WIN_MODE_FLOATING,
     .LayerCount    = 0U,
@@ -620,9 +621,13 @@ Err_t WindowUpdateAll(void) {
     }
 
     p_ren = (SDL_Renderer *)g_MainWindow.p_SdlRenderer;
-    /* Clear background to transparent (0, 0, 0, 0) before drawing layers */
+    /* Clear background to MainWindow BgColor (0xAARRGGBB) before drawing layers */
     if (NULL != p_ren) {
-        (void)SDL_SetRenderDrawColor(p_ren, 0U, 0U, 0U, 0U);
+        (void)SDL_SetRenderDrawColor(p_ren,
+                                     g_MainWindow.BgColor.b.r,
+                                     g_MainWindow.BgColor.b.g,
+                                     g_MainWindow.BgColor.b.b,
+                                     g_MainWindow.BgColor.b.a);
         (void)SDL_RenderClear(p_ren);
     }
 
