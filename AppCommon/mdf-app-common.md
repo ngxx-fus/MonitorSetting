@@ -4,6 +4,7 @@
     + log
     + bitwise
     + error types/enums
+    + circle queue (ring buffer)
 
 - Makefile:
     + Include all dir entire this folder (./)

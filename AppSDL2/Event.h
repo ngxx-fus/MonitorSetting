@@ -1,7 +1,7 @@
 /* file-desc **************************************************************************************
  * @filename    Event.h
- * @brief       Event listener types, callback union, sleeping dispatcher thread, and drag-and-drop.
- * @note        Supports sleeping/waking event and main threads via SDL_cond and SDL_WaitEvent.
+ * @brief       Event listener types, user custom signals, sleeping dispatcher, and drag-and-drop.
+ * @note        Supports mouse, keyboard, system, ACPI, monitor, USB, user signals, and drag/drop.
  **************************************************************************************************/
 
 #ifndef __APP_SDL2_EVENT_H__
@@ -20,7 +20,7 @@
 /* definitions ************************************************************************************
  **************************************************************************************************/
 
-/* Enumeration of supported listener event categories (mouse/keyboard/system/acpi/monitor/usb/drag) */
+/* Enumeration of supported listener event categories */
 enum EventType_e {
     EVENT_TYPE_NONE                     = (0U),
     EVENT_TYPE_MOUSE_DOWN               = (1U),
@@ -33,9 +33,10 @@ enum EventType_e {
     EVENT_TYPE_ACPI                     = (8U),
     EVENT_TYPE_MONITOR                  = (9U),
     EVENT_TYPE_USB                      = (10U),
-    EVENT_TYPE_DRAG_START               = (11U),
-    EVENT_TYPE_DRAG_MOVE                = (12U),
-    EVENT_TYPE_DROP                     = (13U)
+    EVENT_TYPE_USER_SIGNAL              = (11U),
+    EVENT_TYPE_DRAG_START               = (12U),
+    EVENT_TYPE_DRAG_MOVE                = (13U),
+    EVENT_TYPE_DROP                     = (14U)
 };
 typedef enum EventType_e    EventType_t;
 
@@ -51,9 +52,6 @@ struct EventData_st {
     void       *p_UserData;
 };
 typedef struct EventData_st EventData_t;
-
-/* Callback function pointer signature for component event listeners */
-typedef void (*EventCallback_t)(Comp_t *p_comp, const EventData_t *p_event);
 
 /* Layer*.Comp*.Listeners.Event* union as required by MDF */
 union CompEvent_un {
@@ -87,6 +85,7 @@ Err_t EventDispatchToComp(Comp_t *p_comp, const EventData_t *p_event);
 Err_t EventHandleDragDrop(Layer_t *p_layers, uint32_t layer_count, const EventData_t *p_event);
 Err_t EventDispatchToLayers(Layer_t *p_layers, uint32_t layer_count, const EventData_t *p_event);
 Err_t EventPushToListenerQueue(const EventData_t *p_event);
+Err_t EventSendUserSignal(uint32_t sig_code, void *p_user_data);
 Err_t EventPollOSOnMainThread(uint8_t *p_quit_requested);
 Err_t EventWaitOSOnMainThread(uint8_t *p_quit_requested, uint32_t timeout_ms);
 Err_t EventListenerThreadStart(void);

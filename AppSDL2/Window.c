@@ -1,7 +1,7 @@
 /* file-desc **************************************************************************************
  * @filename    Window.c
- * @brief       Main window lifecycle, non-blocking UI lock, and thread-wakeup queue implementation.
- * @note        Uses SDL_mutex, SDL_cond, and SDL_PushEvent to wake up the sleeping main thread.
+ * @brief       Main window lifecycle, single-instance guard, modes, Yes/No dialog, and queue.
+ * @note        Uses POSIX signals (SIGUSR1/SIGUSR2) for single-instance toggle and user signals.
  **************************************************************************************************/
 
 /* headers ****************************************************************************************
@@ -10,6 +10,9 @@
 #include "./__common__.h"
 #include "./Window.h"
 #include "./Draw.h"
+#include "./Event.h"
+#include <signal.h>
+#include <unistd.h>
 
 /* macros *****************************************************************************************
  **************************************************************************************************/
@@ -28,6 +31,7 @@ MainWindow_t g_MainWindow = {
     .Width         = APP_SDL2_DEFAULT_WIN_W,
     .Height        = APP_SDL2_DEFAULT_WIN_H,
     .IsVisible     = 0U,
+    .Mode          = WIN_MODE_FLOATING,
     .LayerCount    = 0U,
     .p_SdlWindow   = NULL,
     .p_SdlRenderer = NULL,
@@ -35,9 +39,6 @@ MainWindow_t g_MainWindow = {
 };
 
 MainWindowUpdateQueue_t g_MainWindowUpdateQueue = {
-    .Head            = 0U,
-    .Tail            = 0U,
-    .Count           = 0U,
     .p_Mutex         = NULL,
     .p_Cond          = NULL,
     .WakeupEventType = 0U
@@ -46,12 +47,17 @@ MainWindowUpdateQueue_t g_MainWindowUpdateQueue = {
 /* private variables ******************************************************************************
  **************************************************************************************************/
 
+static volatile sig_atomic_t g_SigTogglePending = 0;
+static volatile sig_atomic_t g_SigUserPending   = 0;
+
 /* exported functions *****************************************************************************
  **************************************************************************************************/
 
 /* public functions *******************************************************************************
  **************************************************************************************************/
 
+Err_t WindowEnsureSingleInstance(uint8_t *p_is_primary);
+Err_t WindowCheckSingleInstanceSignal(void);
 Err_t WindowInit(const_str_t title, uint32_t width, uint32_t height);
 Err_t WindowDeinit(void);
 Err_t WindowLockUI(void);
@@ -59,7 +65,10 @@ Err_t WindowUnlockUI(void);
 Err_t WindowWakeupMainThread(void);
 Err_t WindowShow(void);
 Err_t WindowHide(void);
+Err_t WindowToggle(void);
+Err_t WindowSetMode(WinMode_t mode);
 Err_t WindowResize(uint32_t width, uint32_t height);
+Err_t WindowShowYesNoDialog(const_str_t title, const_str_t message, uint8_t *p_is_yes);
 Err_t WindowUpdateAll(void);
 Err_t WindowQueuePush(WinActionCmd_t cmd, Comp_t *p_comp);
 Err_t WindowQueuePushResize(uint32_t width, uint32_t height);
@@ -68,8 +77,105 @@ Err_t WindowQueueProcessAll(void);
 /* private functions ******************************************************************************
  **************************************************************************************************/
 
+static void OnPosixSignalReceived(int sig_num);
+
 /* function implementations ***********************************************************************
  **************************************************************************************************/
+
+/* POSIX signal handler for single-instance toggle (SIGUSR1) and custom user signal (SIGUSR2)
+ * @param sig_num[in] Signal number received from OS
+ * @note Sets atomic flags processed safely on the main thread
+ */
+static void OnPosixSignalReceived(int sig_num) {
+    /* Check which POSIX signal was delivered */
+    if (SIGUSR1 == sig_num) {
+        g_SigTogglePending = 1;
+    } else if (SIGUSR2 == sig_num) {
+        g_SigUserPending = 1;
+    } else {
+        /* Ignore other signals */
+    }
+
+    /* Return from signal handler */
+    return;
+}
+
+/* Enforce single application instance; if already running, signal the 1st instance to toggle
+ * @param p_is_primary[out] Outputs 1U if this process is the 1st instance, 0U if secondary
+ * @return APP_SUCCESS on success, or error code
+ * @note Secondary instance sends SIGUSR1 to the primary instance PID and exits
+ */
+Err_t WindowEnsureSingleInstance(uint8_t *p_is_primary) {
+    FILE *p_file;
+    int   existing_pid = 0;
+
+    #if (1U == PARAM_CHECK_EN)
+    /* Validate output flag pointer */
+    if (NULL == p_is_primary) {
+        APP_ERR("p_is_primary is NULL!");
+        return APP_ERROR_NULL;
+    }
+    #endif /* (1U == PARAM_CHECK_EN) */
+
+    *p_is_primary = 1U;
+
+    /* Check if a PID lock file already exists */
+    p_file = fopen(APP_SDL2_SINGLE_INST_PID_FILE, "r");
+    if (NULL != p_file) {
+        if (1 == fscanf(p_file, "%d", &existing_pid)) {
+            /* Check if existing process is alive and not this process */
+            if ((existing_pid > 0) && (existing_pid != (int)getpid()) &&
+                (0 == kill((pid_t)existing_pid, 0))) {
+                /* Send SIGUSR1 to toggle the 1st instance window */
+                (void)kill((pid_t)existing_pid, SIGUSR1);
+                (void)fclose(p_file);
+                *p_is_primary = 0U;
+                APP_INFO("Primary instance (PID %d) is already running. Toggled primary window.",
+                         existing_pid);
+                /* Return immediately so secondary instance can exit */
+                return APP_SUCCESS;
+            }
+        }
+        (void)fclose(p_file);
+    }
+
+    /* Write current process PID as the primary instance */
+    p_file = fopen(APP_SDL2_SINGLE_INST_PID_FILE, "w");
+    if (NULL != p_file) {
+        (void)fprintf(p_file, "%d\n", (int)getpid());
+        (void)fclose(p_file);
+    }
+
+    /* Register POSIX signal handlers for single-instance toggle and custom user signal */
+    (void)signal(SIGUSR1, OnPosixSignalReceived);
+    (void)signal(SIGUSR2, OnPosixSignalReceived);
+
+    /* Return success as primary instance */
+    return APP_SUCCESS;
+}
+
+/* Check and process any pending POSIX signals (SIGUSR1 window toggle / SIGUSR2 custom signal)
+ * @return APP_SUCCESS on success
+ * @note Called by the main thread loop
+ */
+Err_t WindowCheckSingleInstanceSignal(void) {
+    /* Check if SIGUSR1 toggle signal was received */
+    if (0 != g_SigTogglePending) {
+        g_SigTogglePending = 0;
+        /* Queue window visibility toggle */
+        (void)WindowQueuePush(WIN_ACTION_TOGGLE_WINDOW, NULL);
+    }
+
+    /* Check if SIGUSR2 custom user signal was received */
+    if (0 != g_SigUserPending) {
+        g_SigUserPending = 0;
+        /* Forward OS custom signal into EventListenerThread */
+        (void)EventSendUserSignal((uint32_t)SIGUSR2, NULL);
+    }
+
+    /* Return success after checking signals */
+    return APP_SUCCESS;
+}
 
 /* Initialize the SDL2 main window, renderer, UI mutex, and wakeup event for g_MainWindowUpdateQueue
  * @param title[in] Window title string
@@ -130,6 +236,7 @@ Err_t WindowInit(const_str_t title, uint32_t width, uint32_t height) {
     g_MainWindow.Width         = width;
     g_MainWindow.Height        = height;
     g_MainWindow.IsVisible     = 1U;
+    g_MainWindow.Mode          = WIN_MODE_FLOATING;
     g_MainWindow.LayerCount    = APP_SDL2_MAX_LAYERS;
     g_MainWindow.p_SdlWindow   = (void *)p_win;
     g_MainWindow.p_SdlRenderer = (void *)p_ren;
@@ -137,15 +244,26 @@ Err_t WindowInit(const_str_t title, uint32_t width, uint32_t height) {
 
     /* Reset all layers in g_MainWindow */
     for (idx = 0U; idx < APP_SDL2_MAX_LAYERS; idx++) {
-        g_MainWindow.Layers[idx].LayerId   = idx;
-        g_MainWindow.Layers[idx].IsVisible = 1U;
-        g_MainWindow.Layers[idx].CompCount = 0U;
-        g_MainWindow.Layers[idx].p_Comps   = NULL;
+        g_MainWindow.Layers[idx].LayerId          = idx;
+        g_MainWindow.Layers[idx].IsVisible        = 1U;
+        g_MainWindow.Layers[idx].IsScrollable     = 0U;
+        g_MainWindow.Layers[idx].ScrollX          = 0;
+        g_MainWindow.Layers[idx].ScrollY          = 0;
+        g_MainWindow.Layers[idx].RectClip.W       = 0U;
+        g_MainWindow.Layers[idx].RectClip.H       = 0U;
+        g_MainWindow.Layers[idx].RectClip.OffsetX = 0;
+        g_MainWindow.Layers[idx].RectClip.OffsetY = 0;
+        g_MainWindow.Layers[idx].RectClip.Rotation = 0U;
+        g_MainWindow.Layers[idx].CompCount        = 0U;
+        g_MainWindow.Layers[idx].p_Comps          = NULL;
     }
 
-    g_MainWindowUpdateQueue.Head            = 0U;
-    g_MainWindowUpdateQueue.Tail            = 0U;
-    g_MainWindowUpdateQueue.Count           = 0U;
+    /* Initialize circular queue for UI update actions (allow_overwrite = 1U) */
+    (void)CircleQueueInit(&g_MainWindowUpdateQueue.Queue,
+                          g_MainWindowUpdateQueue.Actions,
+                          (uint32_t)sizeof(WinUpdateAction_t),
+                          APP_SDL2_MAX_QUEUE_ACTIONS,
+                          1U);
     g_MainWindowUpdateQueue.p_Mutex         = (void *)SDL_CreateMutex();
     g_MainWindowUpdateQueue.p_Cond          = (void *)SDL_CreateCond();
     g_MainWindowUpdateQueue.WakeupEventType = SDL_RegisterEvents(1);
@@ -154,11 +272,14 @@ Err_t WindowInit(const_str_t title, uint32_t width, uint32_t height) {
     return APP_SUCCESS;
 }
 
-/* Destroy the SDL2 main window, synchronization primitives, and renderer resources
+/* Destroy the SDL2 main window, synchronization primitives, PID file, and renderer resources
  * @return APP_SUCCESS on success
  * @note Safe to call when shutting down the application
  */
 Err_t WindowDeinit(void) {
+    /* Remove single-instance PID lock file */
+    (void)unlink(APP_SDL2_SINGLE_INST_PID_FILE);
+
     /* Destroy queue condition variable if allocated */
     if (NULL != g_MainWindowUpdateQueue.p_Cond) {
         SDL_DestroyCond((SDL_cond *)g_MainWindowUpdateQueue.p_Cond);
@@ -255,15 +376,16 @@ Err_t WindowWakeupMainThread(void) {
     return APP_SUCCESS;
 }
 
-/* Show the main window on screen
+/* Show the main window on screen and raise focus
  * @return APP_SUCCESS on success
- * @note Marks g_MainWindow.IsVisible as 1U and calls SDL_ShowWindow
+ * @note Marks g_MainWindow.IsVisible as 1U and calls SDL_ShowWindow + SDL_RaiseWindow
  */
 Err_t WindowShow(void) {
     g_MainWindow.IsVisible = 1U;
-    /* Show underlying SDL window if valid */
+    /* Show and focus underlying SDL window if valid */
     if (NULL != g_MainWindow.p_SdlWindow) {
         SDL_ShowWindow((SDL_Window *)g_MainWindow.p_SdlWindow);
+        SDL_RaiseWindow((SDL_Window *)g_MainWindow.p_SdlWindow);
     }
 
     /* Return success after showing window */
@@ -283,6 +405,53 @@ Err_t WindowHide(void) {
 
     /* Return success after hiding window */
     return APP_SUCCESS;
+}
+
+/* Toggle the main window between shown and hidden states
+ * @return APP_SUCCESS on success
+ * @note Invoked when a 2nd application instance is launched
+ */
+Err_t WindowToggle(void) {
+    /* Hide if currently visible, otherwise show and focus */
+    if (0U != g_MainWindow.IsVisible) {
+        return WindowHide();
+    }
+
+    /* Show window if currently hidden */
+    return WindowShow();
+}
+
+/* Switch the main window display mode between floating and maximized
+ * @param mode[in] Target window mode (WIN_MODE_FLOATING or WIN_MODE_MAXIMIZED)
+ * @return APP_SUCCESS on success, or APP_ERROR_INVALID_PARAM
+ * @note Calls SDL_MaximizeWindow or SDL_RestoreWindow
+ */
+Err_t WindowSetMode(WinMode_t mode) {
+    SDL_Window *p_win = (SDL_Window *)g_MainWindow.p_SdlWindow;
+
+    /* Apply requested window mode */
+    switch (mode) {
+        case WIN_MODE_FLOATING:
+            g_MainWindow.Mode = WIN_MODE_FLOATING;
+            if (NULL != p_win) {
+                SDL_RestoreWindow(p_win);
+            }
+            /* Break after restoring floating window */
+            break;
+        case WIN_MODE_MAXIMIZED:
+            g_MainWindow.Mode = WIN_MODE_MAXIMIZED;
+            if (NULL != p_win) {
+                SDL_MaximizeWindow(p_win);
+            }
+            /* Break after maximizing window */
+            break;
+        default:
+            APP_ERR("Unsupported window mode!");
+            return APP_ERROR_INVALID_PARAM;
+    }
+
+    /* Trigger full redraw after changing window mode */
+    return WindowUpdateAll();
 }
 
 /* Adjust the width and height of the main window
@@ -310,6 +479,50 @@ Err_t WindowResize(uint32_t width, uint32_t height) {
 
     /* Re-render all window layers after resize */
     return WindowUpdateAll();
+}
+
+/* Display a modal Yes/No quick confirmation dialog box
+ * @param title[in] Dialog title string
+ * @param message[in] Dialog prompt message
+ * @param p_is_yes[out] Outputs 1U if user clicked Yes, 0U if user clicked No or closed dialog
+ * @return APP_SUCCESS on success, or error code
+ * @note Uses SDL_ShowMessageBox with Yes and No buttons
+ */
+Err_t WindowShowYesNoDialog(const_str_t title, const_str_t message, uint8_t *p_is_yes) {
+    int button_id = 0;
+    const SDL_MessageBoxButtonData buttons[2] = {
+        { SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 1, "Yes" },
+        { SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, 0, "No"  }
+    };
+    SDL_MessageBoxData msgbox_data;
+
+    #if (1U == PARAM_CHECK_EN)
+    /* Validate dialog parameters */
+    if ((NULL == title) || (NULL == message) || (NULL == p_is_yes)) {
+        APP_ERR("Null parameter in WindowShowYesNoDialog!");
+        return APP_ERROR_NULL;
+    }
+    #endif /* (1U == PARAM_CHECK_EN) */
+
+    msgbox_data.flags       = SDL_MESSAGEBOX_INFORMATION;
+    msgbox_data.window      = (SDL_Window *)g_MainWindow.p_SdlWindow;
+    msgbox_data.title       = title;
+    msgbox_data.message     = message;
+    msgbox_data.numbuttons  = 2;
+    msgbox_data.buttons     = buttons;
+    msgbox_data.colorScheme = NULL;
+
+    /* Show native SDL2 Yes/No modal dialog */
+    if (0 != SDL_ShowMessageBox(&msgbox_data, &button_id)) {
+        APP_ERR("SDL_ShowMessageBox failed: %s", SDL_GetError());
+        *p_is_yes = 0U;
+        return APP_ERROR;
+    }
+
+    *p_is_yes = (1 == button_id) ? 1U : 0U;
+
+    /* Return success after user responds to dialog */
+    return APP_SUCCESS;
 }
 
 /* Redraw all visible layers and components in the main window using non-blocking UI lock
@@ -367,11 +580,12 @@ Err_t WindowUpdateAll(void) {
 /* Push an update action from a sub-thread into g_MainWindowUpdateQueue and wake main thread
  * @param cmd[in] Action command type
  * @param p_comp[in] Pointer to destination component (may be NULL for global window actions)
- * @return APP_SUCCESS on success, or APP_ERROR_QUEUE_FULL if queue is full
+ * @return APP_SUCCESS on success, or error code
  * @note Protected by g_MainWindowUpdateQueue.p_Mutex and wakes sleeping main thread
  */
 Err_t WindowQueuePush(WinActionCmd_t cmd, Comp_t *p_comp) {
-    uint32_t tail;
+    WinUpdateAction_t action;
+    Err_t             err;
 
     #if (1U == PARAM_CHECK_EN)
     /* Validate command type */
@@ -381,30 +595,26 @@ Err_t WindowQueuePush(WinActionCmd_t cmd, Comp_t *p_comp) {
     }
     #endif /* (1U == PARAM_CHECK_EN) */
 
+    action.Type.Raw = 0ULL;
+    action.Type.Cmd = cmd;
+    action.p_Comp   = p_comp;
+
     /* Lock queue mutex if available */
     if (NULL != g_MainWindowUpdateQueue.p_Mutex) {
         (void)SDL_LockMutex((SDL_mutex *)g_MainWindowUpdateQueue.p_Mutex);
     }
 
-    /* Check if g_MainWindowUpdateQueue has available capacity */
-    if (g_MainWindowUpdateQueue.Count >= APP_SDL2_MAX_QUEUE_ACTIONS) {
-        /* Unlock mutex before returning queue full error */
-        if (NULL != g_MainWindowUpdateQueue.p_Mutex) {
-            (void)SDL_UnlockMutex((SDL_mutex *)g_MainWindowUpdateQueue.p_Mutex);
-        }
-        APP_ERR("g_MainWindowUpdateQueue is full!");
-        return APP_ERROR_QUEUE_FULL;
-    }
-
-    tail = g_MainWindowUpdateQueue.Tail;
-    g_MainWindowUpdateQueue.Actions[tail].Type.Cmd = cmd;
-    g_MainWindowUpdateQueue.Actions[tail].p_Comp   = p_comp;
-    g_MainWindowUpdateQueue.Tail = (tail + 1U) % APP_SDL2_MAX_QUEUE_ACTIONS;
-    g_MainWindowUpdateQueue.Count++;
+    /* Push action into circular queue (overwrites oldest if full) */
+    err = CircleQueuePush(&g_MainWindowUpdateQueue.Queue, &action);
 
     /* Unlock queue mutex */
     if (NULL != g_MainWindowUpdateQueue.p_Mutex) {
         (void)SDL_UnlockMutex((SDL_mutex *)g_MainWindowUpdateQueue.p_Mutex);
+    }
+
+    /* Return error if push failed */
+    if (APP_SUCCESS != err) {
+        return err;
     }
 
     /* Wake up sleeping main thread so it processes the queued UI action immediately */
@@ -421,7 +631,8 @@ Err_t WindowQueuePush(WinActionCmd_t cmd, Comp_t *p_comp) {
  * @note Uses the Resize struct member of WinActionType_un
  */
 Err_t WindowQueuePushResize(uint32_t width, uint32_t height) {
-    uint32_t tail;
+    WinUpdateAction_t action;
+    Err_t             err;
 
     #if (1U == PARAM_CHECK_EN)
     /* Validate non-zero dimensions */
@@ -431,31 +642,28 @@ Err_t WindowQueuePushResize(uint32_t width, uint32_t height) {
     }
     #endif /* (1U == PARAM_CHECK_EN) */
 
+    action.Type.Raw           = 0ULL;
+    action.Type.Resize.Cmd    = WIN_ACTION_RESIZE_WINDOW;
+    action.Type.Resize.Width  = width;
+    action.Type.Resize.Height = height;
+    action.p_Comp             = NULL;
+
     /* Lock queue mutex */
     if (NULL != g_MainWindowUpdateQueue.p_Mutex) {
         (void)SDL_LockMutex((SDL_mutex *)g_MainWindowUpdateQueue.p_Mutex);
     }
 
-    /* Check queue capacity */
-    if (g_MainWindowUpdateQueue.Count >= APP_SDL2_MAX_QUEUE_ACTIONS) {
-        if (NULL != g_MainWindowUpdateQueue.p_Mutex) {
-            (void)SDL_UnlockMutex((SDL_mutex *)g_MainWindowUpdateQueue.p_Mutex);
-        }
-        APP_ERR("g_MainWindowUpdateQueue is full!");
-        return APP_ERROR_QUEUE_FULL;
-    }
-
-    tail = g_MainWindowUpdateQueue.Tail;
-    g_MainWindowUpdateQueue.Actions[tail].Type.Resize.Cmd    = WIN_ACTION_RESIZE_WINDOW;
-    g_MainWindowUpdateQueue.Actions[tail].Type.Resize.Width  = width;
-    g_MainWindowUpdateQueue.Actions[tail].Type.Resize.Height = height;
-    g_MainWindowUpdateQueue.Actions[tail].p_Comp             = NULL;
-    g_MainWindowUpdateQueue.Tail = (tail + 1U) % APP_SDL2_MAX_QUEUE_ACTIONS;
-    g_MainWindowUpdateQueue.Count++;
+    /* Push resize action into circular queue (overwrites oldest if full) */
+    err = CircleQueuePush(&g_MainWindowUpdateQueue.Queue, &action);
 
     /* Unlock queue mutex */
     if (NULL != g_MainWindowUpdateQueue.p_Mutex) {
         (void)SDL_UnlockMutex((SDL_mutex *)g_MainWindowUpdateQueue.p_Mutex);
+    }
+
+    /* Return error if push failed */
+    if (APP_SUCCESS != err) {
+        return err;
     }
 
     /* Wake up sleeping main thread */
@@ -475,20 +683,15 @@ Err_t WindowQueueProcessAll(void) {
     /* Process queued actions until g_MainWindowUpdateQueue is empty */
     while (1) {
         WinUpdateAction_t action;
-        uint8_t           has_action = 0U;
+        Err_t             pop_err;
 
         /* Lock queue mutex to pop next action */
         if (NULL != g_MainWindowUpdateQueue.p_Mutex) {
             (void)SDL_LockMutex((SDL_mutex *)g_MainWindowUpdateQueue.p_Mutex);
         }
 
-        /* Pop one action if queue is non-empty */
-        if (g_MainWindowUpdateQueue.Count > 0U) {
-            action = g_MainWindowUpdateQueue.Actions[g_MainWindowUpdateQueue.Head];
-            g_MainWindowUpdateQueue.Head = (g_MainWindowUpdateQueue.Head + 1U) % APP_SDL2_MAX_QUEUE_ACTIONS;
-            g_MainWindowUpdateQueue.Count--;
-            has_action = 1U;
-        }
+        /* Pop oldest action from circular queue */
+        pop_err = CircleQueuePop(&g_MainWindowUpdateQueue.Queue, &action);
 
         /* Unlock queue mutex */
         if (NULL != g_MainWindowUpdateQueue.p_Mutex) {
@@ -496,7 +699,7 @@ Err_t WindowQueueProcessAll(void) {
         }
 
         /* Exit loop when no more actions remain */
-        if (0U == has_action) {
+        if (APP_SUCCESS != pop_err) {
             /* Break out of queue drain loop */
             break;
         }
@@ -518,6 +721,17 @@ Err_t WindowQueueProcessAll(void) {
                 /* Hide the main window */
                 (void)WindowHide();
                 /* Break after hiding window */
+                break;
+            case WIN_ACTION_TOGGLE_WINDOW:
+                /* Toggle main window visibility */
+                (void)WindowToggle();
+                need_full_redraw = g_MainWindow.IsVisible;
+                /* Break after toggling window */
+                break;
+            case WIN_ACTION_SET_MODE:
+                /* Set window mode (floating/maximize) */
+                (void)WindowSetMode(action.Type.ModeCfg.Mode);
+                /* Break after setting window mode */
                 break;
             case WIN_ACTION_RESIZE_WINDOW:
                 /* Resize the main window */

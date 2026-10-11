@@ -1,6 +1,6 @@
 /* file-desc **************************************************************************************
  * @filename    Component.h
- * @brief       UI component, layer, and child extension definitions for AppSDL2.
+ * @brief       UI component, scrollable layer, button, and child extension definitions for AppSDL2.
  * @note        Implements the Layer -> Comp -> Type / Listeners / p_ExtComps hierarchy.
  **************************************************************************************************/
 
@@ -22,7 +22,11 @@
 
 /* Forward declarations */
 struct Comp_st;
+struct EventData_st;
 union CompEvent_un;
+
+/* Callback function pointer signature for component event listeners */
+typedef void (*EventCallback_t)(struct Comp_st *p_comp, const struct EventData_st *p_event);
 
 /* Component class classification */
 enum CompClass_e {
@@ -168,12 +172,16 @@ struct Comp_st {
 };
 typedef struct Comp_st      Comp_t;
 
-/* Layer structure containing multiple components */
+/* Layer structure supporting RectClip (in MainWindow coords) and local (0,0) components */
 struct Layer_st {
-    uint32_t LayerId;
-    uint8_t  IsVisible;
-    uint32_t CompCount;
-    Comp_t  *p_Comps;
+    uint32_t  LayerId;
+    uint8_t   IsVisible;
+    uint8_t   IsScrollable;
+    int32_t   ScrollX;
+    int32_t   ScrollY;
+    CompDim_t RectClip;                 /* Positioned relative to (0, 0) of MainWindow */
+    uint32_t  CompCount;
+    Comp_t   *p_Comps;                  /* Components positioned relative to (0, 0) of Layer */
 };
 typedef struct Layer_st     Layer_t;
 
@@ -184,6 +192,7 @@ typedef struct Layer_st     Layer_t;
  **************************************************************************************************/
 
 Err_t CompInitRect(Comp_t *p_comp, const_str_t label, CompDim_t dim, Color_t color, uint32_t radius, uint8_t is_filled);
+Err_t CompInitButton(Comp_t *p_comp, const_str_t label, CompDim_t dim, Color_t color, union CompEvent_un *p_event_slot, EventCallback_t p_on_click);
 Err_t CompInitCircle(Comp_t *p_comp, const_str_t label, CompDim_t dim, Color_t color, uint32_t radius, uint8_t is_filled);
 Err_t CompInitLine(Comp_t *p_comp, const_str_t label, int32_t x1, int32_t y1, int32_t x2, int32_t y2, Color_t color, uint32_t thickness);
 Err_t CompInitText(Comp_t *p_comp, const_str_t label, int32_t x, int32_t y, const_str_t text_str, Color_t color, uint32_t font_size);
@@ -191,6 +200,8 @@ Err_t CompInitTable(Comp_t *p_comp, const_str_t label, CompDim_t dim, Color_t co
 Err_t CompSetBorder(Comp_t *p_comp, uint32_t border_size, Color_t border_color);
 Err_t CompSetPosition(Comp_t *p_comp, int32_t offset_x, int32_t offset_y);
 Err_t CompScrollTable(Comp_t *p_comp, int32_t delta_x, int32_t delta_y);
+Err_t LayerSetScrollable(Layer_t *p_layer, CompDim_t rect_clip, uint8_t is_scrollable);
+Err_t LayerScroll(Layer_t *p_layer, int32_t delta_x, int32_t delta_y);
 Err_t CompHitTest(const Comp_t *p_comp, int32_t x, int32_t y, uint8_t *p_is_hit);
 
 /* reserved ***************************************************************************************

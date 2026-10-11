@@ -1,7 +1,7 @@
 /* file-desc **************************************************************************************
  * @filename    Component.c
- * @brief       Component initialization, layout manipulation, and hit-testing implementation.
- * @note        Provides base operations for Rect, Circle, Line, Text, ScrollTable, and Comp_t.
+ * @brief       Component, button, and scrollable layer manipulation implementation.
+ * @note        Provides base operations for Rect, Button, Circle, Line, Text, Table, and Layer_t.
  **************************************************************************************************/
 
 /* headers ****************************************************************************************
@@ -9,6 +9,7 @@
 
 #include "./__common__.h"
 #include "./Component.h"
+#include "./Event.h"
 
 /* macros *****************************************************************************************
  **************************************************************************************************/
@@ -32,6 +33,7 @@
  **************************************************************************************************/
 
 Err_t CompInitRect(Comp_t *p_comp, const_str_t label, CompDim_t dim, Color_t color, uint32_t radius, uint8_t is_filled);
+Err_t CompInitButton(Comp_t *p_comp, const_str_t label, CompDim_t dim, Color_t color, union CompEvent_un *p_event_slot, EventCallback_t p_on_click);
 Err_t CompInitCircle(Comp_t *p_comp, const_str_t label, CompDim_t dim, Color_t color, uint32_t radius, uint8_t is_filled);
 Err_t CompInitLine(Comp_t *p_comp, const_str_t label, int32_t x1, int32_t y1, int32_t x2, int32_t y2, Color_t color, uint32_t thickness);
 Err_t CompInitText(Comp_t *p_comp, const_str_t label, int32_t x, int32_t y, const_str_t text_str, Color_t color, uint32_t font_size);
@@ -39,6 +41,8 @@ Err_t CompInitTable(Comp_t *p_comp, const_str_t label, CompDim_t dim, Color_t co
 Err_t CompSetBorder(Comp_t *p_comp, uint32_t border_size, Color_t border_color);
 Err_t CompSetPosition(Comp_t *p_comp, int32_t offset_x, int32_t offset_y);
 Err_t CompScrollTable(Comp_t *p_comp, int32_t delta_x, int32_t delta_y);
+Err_t LayerSetScrollable(Layer_t *p_layer, CompDim_t viewport, uint8_t is_scrollable);
+Err_t LayerScroll(Layer_t *p_layer, int32_t delta_x, int32_t delta_y);
 Err_t CompHitTest(const Comp_t *p_comp, int32_t x, int32_t y, uint8_t *p_is_hit);
 
 /* private functions ******************************************************************************
@@ -86,6 +90,51 @@ Err_t CompInitRect(Comp_t *p_comp, const_str_t label, CompDim_t dim, Color_t col
     p_comp->IsVisible                   = 1U;
 
     /* Return success after initializing rect component */
+    return APP_SUCCESS;
+}
+
+/* Initialize a button component with a click event callback
+ * @param p_comp[out] Pointer to button component instance
+ * @param label[in] Button text/label string (also rendered inside the button)
+ * @param dim[in] Button dimensions and position
+ * @param color[in] Button background ARGB color
+ * @param p_event_slot[out] Caller-provided CompEvent_t slot to bind the click callback
+ * @param p_on_click[in] Callback invoked when the button is clicked (EVENT_TYPE_MOUSE_DOWN)
+ * @return APP_SUCCESS on success, or error code
+ * @note Sets Class = COMP_CLASS_BUTTON so DrawComponent renders the button label automatically
+ */
+Err_t CompInitButton(Comp_t *p_comp, const_str_t label, CompDim_t dim, Color_t color, union CompEvent_un *p_event_slot, EventCallback_t p_on_click) {
+    Err_t   err;
+    Color_t border_col = { .w = 0xFFFFFFFFU };
+
+    #if (1U == PARAM_CHECK_EN)
+    /* Validate component pointer */
+    if (NULL == p_comp) {
+        APP_ERR("p_comp is NULL!");
+        return APP_ERROR_NULL;
+    }
+    #endif /* (1U == PARAM_CHECK_EN) */
+
+    /* Initialize underlying rounded rectangle for the button */
+    err = CompInitRect(p_comp, label, dim, color, 6U, 1U);
+    if (APP_SUCCESS != err) {
+        APP_ERR("Failed to init button rect!");
+        return err;
+    }
+
+    p_comp->Class = COMP_CLASS_BUTTON;
+    /* Set default white border for button */
+    (void)CompSetBorder(p_comp, 1U, border_col);
+
+    /* Bind click callback if event slot and callback function are provided */
+    if ((NULL != p_event_slot) && (NULL != p_on_click)) {
+        p_event_slot->Listener.Type       = EVENT_TYPE_MOUSE_DOWN;
+        p_event_slot->Listener.p_CallBack = p_on_click;
+        p_comp->Listeners.Count           = 1U;
+        p_comp->Listeners.p_Events        = p_event_slot;
+    }
+
+    /* Return success after initializing button component */
     return APP_SUCCESS;
 }
 
@@ -377,6 +426,66 @@ Err_t CompScrollTable(Comp_t *p_comp, int32_t delta_x, int32_t delta_y) {
     p_comp->Type.Table.ScrollY += delta_y;
 
     /* Return success after updating scroll offsets */
+    return APP_SUCCESS;
+}
+
+/* Configure a layer as scrollable within a given viewport rectangle
+ * @param p_layer[in/out] Pointer to target layer
+ * @param viewport[in] Clipping viewport dimensions for the scrollable layer
+ * @param is_scrollable[in] Non-zero to enable layer scrolling
+ * @return APP_SUCCESS on success, or APP_ERROR_NULL
+ * @note Allows an entire layer (with attached table/components) to scroll together
+ */
+Err_t LayerSetScrollable(Layer_t *p_layer, CompDim_t rect_clip, uint8_t is_scrollable) {
+    #if (1U == PARAM_CHECK_EN)
+    /* Validate layer pointer */
+    if (NULL == p_layer) {
+        APP_ERR("p_layer is NULL!");
+        return APP_ERROR_NULL;
+    }
+    #endif /* (1U == PARAM_CHECK_EN) */
+
+    p_layer->RectClip     = rect_clip;
+    p_layer->IsScrollable = is_scrollable;
+    p_layer->ScrollX      = 0;
+    p_layer->ScrollY      = 0;
+
+    /* Return success after configuring scrollable layer RectClip */
+    return APP_SUCCESS;
+}
+
+/* Scroll a scrollable layer by (delta_x, delta_y) without mutating local component (0,0) offsets
+ * @param p_layer[in/out] Pointer to scrollable layer
+ * @param delta_x[in] Horizontal scroll step in pixels
+ * @param delta_y[in] Vertical scroll step in pixels
+ * @return APP_SUCCESS on success, or error code
+ * @note Components remain anchored to Layer (0,0); DrawLayer applies RectClip + ScrollX/Y
+ */
+Err_t LayerScroll(Layer_t *p_layer, int32_t delta_x, int32_t delta_y) {
+    #if (1U == PARAM_CHECK_EN)
+    /* Validate layer pointer and scrollable flag */
+    if (NULL == p_layer) {
+        APP_ERR("p_layer is NULL!");
+        return APP_ERROR_NULL;
+    }
+    if (0U == p_layer->IsScrollable) {
+        APP_ERR("Layer is not scrollable!");
+        return APP_ERROR_INVALID_PARAM;
+    }
+    #endif /* (1U == PARAM_CHECK_EN) */
+
+    p_layer->ScrollX += delta_x;
+    p_layer->ScrollY += delta_y;
+
+    /* Clamp ScrollX and ScrollY so layer origin (0,0) does not scroll past positive top-left */
+    if (p_layer->ScrollX > 0) {
+        p_layer->ScrollX = 0;
+    }
+    if (p_layer->ScrollY > 0) {
+        p_layer->ScrollY = 0;
+    }
+
+    /* Return success after updating layer scroll offsets */
     return APP_SUCCESS;
 }
 

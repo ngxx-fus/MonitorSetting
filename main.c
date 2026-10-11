@@ -1,10 +1,12 @@
 /* file-desc **************************************************************************************
  * @filename    main.c
- * @brief       Demo application showcasing AppCommon and AppSDL2 multi-layer UI and thread safety.
+ * @brief       Demo application showcasing all AppCommon and AppSDL2 MDF features.
  * @note        Demonstrates:
- *              - Thread 1 (Main): Sleeps in EventWaitOSOnMainThread, wakes on OS event or queue push
- *              - Thread 2 (EventListenerThread): Sleeps on SDL_cond, wakes on event arrival
- *              - Thread 3 (MiscBackgroundThread): Sleeps on SDL_CondWaitTimeout, wakes on stop/timer
+ *              - Single-instance lock & toggle (running ./main again toggles the 1st window)
+ *              - 3-thread sleeping/waking architecture (Main, EventListener, MiscBackground)
+ *              - Multi-layer UI with Scrollable Layer/Table, Draggable Cards, and Clickable Buttons
+ *              - Quick Yes/No Dialog (WindowShowYesNoDialog) & Maximize/Floating Window Modes
+ *              - Custom User Signal handling (EVENT_TYPE_USER_SIGNAL)
  **************************************************************************************************/
 
 /* headers ****************************************************************************************
@@ -52,7 +54,7 @@ static MiscThreadCtx_t g_MiscCtx = {
     .TickCount      = 0U
 };
 
-static char g_StatusMsgBuf[64] = "Background Tick: 0 (Drag the blue Monitor card!)";
+static char g_StatusMsgBuf[80] = "Background Tick: 0 | Drag cards, click buttons, or scroll";
 
 /* exported functions *****************************************************************************
  **************************************************************************************************/
@@ -68,6 +70,9 @@ int main(int argc, char *argv[]);
 static void OnCardDragStart(Comp_t *p_comp, const EventData_t *p_event);
 static void OnCardDrop(Comp_t *p_comp, const EventData_t *p_event);
 static void OnMonitorEvent(Comp_t *p_comp, const EventData_t *p_event);
+static void OnUserSignalEvent(Comp_t *p_comp, const EventData_t *p_event);
+static void OnBtnModeClick(Comp_t *p_comp, const EventData_t *p_event);
+static void OnBtnYesNoClick(Comp_t *p_comp, const EventData_t *p_event);
 static int  MiscBackgroundThreadEntry(void *p_arg);
 
 /* function implementations ***********************************************************************
@@ -146,6 +151,68 @@ static void OnMonitorEvent(Comp_t *p_comp, const EventData_t *p_event) {
     return;
 }
 
+/* Callback invoked when a custom user signal (EVENT_TYPE_USER_SIGNAL) is received
+ * @param p_comp[in/out] Component receiving the user signal
+ * @param p_event[in] Event data containing signal code in SysCode
+ * @note Demonstrates custom user signal handling
+ */
+static void OnUserSignalEvent(Comp_t *p_comp, const EventData_t *p_event) {
+    /* Validate pointers before logging */
+    if ((NULL == p_comp) || (NULL == p_event)) {
+        /* Return early on NULL pointer */
+        return;
+    }
+
+    APP_INFO("Custom user signal received on '%s' (sig_code=%u)",
+             p_comp->Label, p_event->SysCode);
+
+    /* Return after handling user signal */
+    return;
+}
+
+/* Click callback for the Toggle Maximize/Floating button component
+ * @param p_comp[in/out] Button component that was clicked
+ * @param p_event[in] Mouse click event data
+ * @note Toggles g_MainWindow between WIN_MODE_FLOATING and WIN_MODE_MAXIMIZED
+ */
+static void OnBtnModeClick(Comp_t *p_comp, const EventData_t *p_event) {
+    WinMode_t next_mode;
+
+    (void)p_comp;
+    (void)p_event;
+
+    next_mode = (WIN_MODE_FLOATING == g_MainWindow.Mode) ? WIN_MODE_MAXIMIZED : WIN_MODE_FLOATING;
+    /* Apply new window mode */
+    (void)WindowSetMode(next_mode);
+    /* Also emit a custom user signal to demonstrate EVENT_TYPE_USER_SIGNAL */
+    (void)EventSendUserSignal(100U + (uint32_t)next_mode, NULL);
+
+    /* Return after toggling window mode */
+    return;
+}
+
+/* Click callback for the Quick Yes/No Dialog button component
+ * @param p_comp[in/out] Button component that was clicked
+ * @param p_event[in] Mouse click event data
+ * @note Opens WindowShowYesNoDialog and logs user selection
+ */
+static void OnBtnYesNoClick(Comp_t *p_comp, const EventData_t *p_event) {
+    uint8_t is_yes = 0U;
+
+    (void)p_comp;
+    (void)p_event;
+
+    /* Show quick Yes/No confirmation dialog */
+    if (APP_SUCCESS == WindowShowYesNoDialog("Apply Monitor Layout?",
+                                             "Do you want to apply the selected monitor configuration?",
+                                             &is_yes)) {
+        APP_INFO("Quick Yes/No Dialog result: %s", (0U != is_yes) ? "YES" : "NO");
+    }
+
+    /* Return after dialog closes */
+    return;
+}
+
 /* Background housekeeping thread that sleeps on condition variable and pushes UI update actions
  * @param p_arg[in] Pointer to MiscThreadCtx_t
  * @return Thread exit status (0)
@@ -192,7 +259,7 @@ static int MiscBackgroundThreadEntry(void *p_arg) {
         }
         if (NULL != p_ctx->p_StatusText) {
             (void)snprintf(g_StatusMsgBuf, sizeof(g_StatusMsgBuf),
-                           "Background Thread Tick: %u | Drag cards or scroll table",
+                           "Background Tick: %u | Drag cards, click buttons, or scroll",
                            p_ctx->TickCount);
         }
         (void)WindowUnlockUI();
@@ -221,7 +288,7 @@ static int MiscBackgroundThreadEntry(void *p_arg) {
     return 0;
 }
 
-/* Application entry point setting up layers, components, listeners, and sleeping/waking threads
+/* Application entry point setting up single-instance guard, layers, components, and threads
  * @param argc[in] Argument count
  * @param argv[in] Argument vector
  * @return 0 on clean exit, non-zero on initialization failure
@@ -229,14 +296,17 @@ static int MiscBackgroundThreadEntry(void *p_arg) {
  */
 int main(int argc, char *argv[]) {
     Err_t          err;
-    uint8_t        quit_flag = 0U;
+    uint8_t        is_primary = 1U;
+    uint8_t        quit_flag  = 0U;
     SDL_Thread    *p_misc_thread;
     int            misc_thread_status = 0;
 
-    /* Layer 0 components: Background panel, divider line, status circle, status text, scroll table */
-    Comp_t         layer0_comps[5];
+    /* Layer 0 components: Background panel, divider line, status circle, status text, 2 buttons */
+    Comp_t         layer0_comps[6];
     /* Layer 1 components: Two draggable monitor selection cards */
     Comp_t         layer1_comps[2];
+    /* Layer 2 components: Scrollable layer containing a table component */
+    Comp_t         layer2_comps[1];
 
     /* Child text extensions (p_ExtComps) for the two draggable monitor cards */
     CompTextCfg_t  card0_title_cfg;
@@ -247,12 +317,21 @@ int main(int argc, char *argv[]) {
     ExtComp_t      card1_ext_item;
     ExtCompList_t  card1_ext_list;
 
-    /* Event listener arrays for the draggable cards */
-    CompEvent_t    card0_events[3];
+    /* Event listener slots for cards and buttons */
+    CompEvent_t    card0_events[4];
     CompEvent_t    card1_events[2];
+    CompEvent_t    btn_mode_event;
+    CompEvent_t    btn_yesno_event;
 
     (void)argc;
     (void)argv;
+
+    /* 0. Enforce single instance: if already running, toggle the 1st instance window and exit */
+    err = WindowEnsureSingleInstance(&is_primary);
+    if ((APP_SUCCESS != err) || (0U == is_primary)) {
+        /* Exit secondary instance after signaling primary instance */
+        return 0;
+    }
 
     /* 1. Initialize main SDL2 window, renderer, UI mutex, and wakeup event */
     err = WindowInit("MonitorSelection - AppSDL2 Demo (ESC to Quit)", DEMO_WIN_WIDTH, DEMO_WIN_HEIGHT);
@@ -261,17 +340,18 @@ int main(int argc, char *argv[]) {
         return -1;
     }
 
-    /* 2. Configure Layer 0 (Base UI elements) */
+    /* 2. Configure Layer 0 (Base UI elements + Action Buttons) */
     {
-        CompDim_t panel_dim  = { .W = 740U, .H = 460U, .OffsetX = 30,  .OffsetY = 30,  .Rotation = 0U };
-        CompDim_t circle_dim = { .W = 24U,  .H = 24U,  .OffsetX = 50,  .OffsetY = 48,  .Rotation = 0U };
-        CompDim_t table_dim  = { .W = 700U, .H = 180U, .OffsetX = 50,  .OffsetY = 280, .Rotation = 0U };
-        Color_t   panel_col  = { .w = 0xFF232936U };
-        Color_t   border_col = { .w = 0xFF4A5568U };
-        Color_t   line_col   = { .w = 0xFF00B4D8U };
-        Color_t   circle_col = { .w = 0xFF00E676U };
-        Color_t   text_col   = { .w = 0xFFE2E8F0U };
-        Color_t   table_col  = { .w = 0xFF1A202CU };
+        CompDim_t panel_dim   = { .W = 740U, .H = 460U, .OffsetX = 30,  .OffsetY = 30, .Rotation = 0U };
+        CompDim_t circle_dim  = { .W = 24U,  .H = 24U,  .OffsetX = 50,  .OffsetY = 48, .Rotation = 0U };
+        CompDim_t btn_mod_dim = { .W = 115U, .H = 28U,  .OffsetX = 505, .OffsetY = 46, .Rotation = 0U };
+        CompDim_t btn_yn_dim  = { .W = 115U, .H = 28U,  .OffsetX = 630, .OffsetY = 46, .Rotation = 0U };
+        Color_t   panel_col   = { .w = 0xFF232936U };
+        Color_t   border_col  = { .w = 0xFF4A5568U };
+        Color_t   line_col    = { .w = 0xFF00B4D8U };
+        Color_t   circle_col  = { .w = 0xFF00E676U };
+        Color_t   text_col    = { .w = 0xFFE2E8F0U };
+        Color_t   btn_col     = { .w = 0xFF2D3748U };
 
         /* Comp 0: Main container rounded rectangle */
         (void)CompInitRect(&layer0_comps[0], "MainPanel", panel_dim, panel_col, 10U, 1U);
@@ -285,24 +365,26 @@ int main(int argc, char *argv[]) {
         (void)CompSetBorder(&layer0_comps[2], 1U, text_col);
 
         /* Comp 3: Status header text */
-        (void)CompInitText(&layer0_comps[3], "HeaderText", 82, 54, g_StatusMsgBuf, text_col, 14U);
+        (void)CompInitText(&layer0_comps[3], "HeaderText", 82, 56, g_StatusMsgBuf, text_col, 14U);
 
-        /* Comp 4: Scrollable table (use mouse wheel to scroll rows/columns) */
-        (void)CompInitTable(&layer0_comps[4], "MonitorTable", table_dim, table_col, 10U, 5U, 1U);
-        (void)CompSetBorder(&layer0_comps[4], 1U, line_col);
+        /* Comp 4: Button to toggle Maximize / Floating mode */
+        (void)CompInitButton(&layer0_comps[4], "Max/Float", btn_mod_dim, btn_col, &btn_mode_event, OnBtnModeClick);
+
+        /* Comp 5: Button to open Quick Yes/No Dialog */
+        (void)CompInitButton(&layer0_comps[5], "Apply (Y/N)", btn_yn_dim, btn_col, &btn_yesno_event, OnBtnYesNoClick);
 
         g_MainWindow.Layers[0].IsVisible = 1U;
-        g_MainWindow.Layers[0].CompCount = 5U;
+        g_MainWindow.Layers[0].CompCount = 6U;
         g_MainWindow.Layers[0].p_Comps   = layer0_comps;
     }
 
     /* 3. Configure Layer 1 (Draggable Monitor Cards with p_ExtComps and Event Listeners) */
     {
-        CompDim_t card0_dim  = { .W = 240U, .H = 130U, .OffsetX = 80,  .OffsetY = 110, .Rotation = 0U };
-        CompDim_t card1_dim  = { .W = 240U, .H = 130U, .OffsetX = 380, .OffsetY = 110, .Rotation = 0U };
-        Color_t   card0_col  = { .w = 0xDD1E4E8CU };
-        Color_t   card1_col  = { .w = 0xDD2B6CB0U };
-        Color_t   white_col  = { .w = 0xFFFFFFFFU };
+        CompDim_t card0_dim = { .W = 240U, .H = 130U, .OffsetX = 80,  .OffsetY = 110, .Rotation = 0U };
+        CompDim_t card1_dim = { .W = 240U, .H = 130U, .OffsetX = 380, .OffsetY = 110, .Rotation = 0U };
+        Color_t   card0_col = { .w = 0xDD1E4E8CU };
+        Color_t   card1_col = { .w = 0xDD2B6CB0U };
+        Color_t   white_col = { .w = 0xFFFFFFFFU };
 
         /* Draggable Card 0: Monitor 1 */
         (void)CompInitRect(&layer1_comps[0], "MonitorCard_1", card0_dim, card0_col, 8U, 1U);
@@ -326,14 +408,16 @@ int main(int argc, char *argv[]) {
         card0_ext_list.p_ExtComps     = &card0_ext_item;
         layer1_comps[0].p_ExtComps    = &card0_ext_list;
 
-        /* Attach listeners to Card 0 */
+        /* Attach listeners to Card 0 (including custom user signal listener) */
         card0_events[0].Listener.Type       = EVENT_TYPE_DRAG_START;
         card0_events[0].Listener.p_CallBack = OnCardDragStart;
         card0_events[1].Listener.Type       = EVENT_TYPE_DROP;
         card0_events[1].Listener.p_CallBack = OnCardDrop;
         card0_events[2].Listener.Type       = EVENT_TYPE_MONITOR;
         card0_events[2].Listener.p_CallBack = OnMonitorEvent;
-        layer1_comps[0].Listeners.Count     = 3U;
+        card0_events[3].Listener.Type       = EVENT_TYPE_USER_SIGNAL;
+        card0_events[3].Listener.p_CallBack = OnUserSignalEvent;
+        layer1_comps[0].Listeners.Count     = 4U;
         layer1_comps[0].Listeners.p_Events  = card0_events;
 
         /* Draggable Card 1: Monitor 2 */
@@ -371,10 +455,28 @@ int main(int argc, char *argv[]) {
         g_MainWindow.Layers[1].p_Comps   = layer1_comps;
     }
 
-    /* 4. Perform initial full window render */
+    /* 4. Configure Layer 2 (Scrollable Layer with attached Table component) */
+    {
+        /* Layer RectClip is positioned relative to (0, 0) of MainWindow */
+        CompDim_t rect_clip = { .W = 700U, .H = 180U, .OffsetX = 50, .OffsetY = 280, .Rotation = 0U };
+        /* Component inside Layer 2 is positioned relative to (0, 0) of Layer 2 */
+        CompDim_t table_dim = { .W = 700U, .H = 300U, .OffsetX = 0,  .OffsetY = 0,   .Rotation = 0U };
+        Color_t   table_col = { .w = 0xFF1A202CU };
+        Color_t   line_col  = { .w = 0xFF00B4D8U };
+
+        (void)CompInitTable(&layer2_comps[0], "MonitorTable", table_dim, table_col, 10U, 5U, 1U);
+        (void)CompSetBorder(&layer2_comps[0], 1U, line_col);
+
+        g_MainWindow.Layers[2].IsVisible = 1U;
+        g_MainWindow.Layers[2].CompCount = 1U;
+        g_MainWindow.Layers[2].p_Comps   = layer2_comps;
+        (void)LayerSetScrollable(&g_MainWindow.Layers[2], rect_clip, 1U);
+    }
+
+    /* 5. Perform initial full window render */
     (void)WindowUpdateAll();
 
-    /* 5. Start Sub-Thread 1: Dedicated Event Listener Thread (sleeps until events arrive) */
+    /* 6. Start Sub-Thread 1: Dedicated Event Listener Thread (sleeps until events arrive) */
     err = EventListenerThreadStart();
     if (APP_SUCCESS != err) {
         APP_ERR("Failed to start EventListenerThread: %s", Err2Str(err));
@@ -382,7 +484,7 @@ int main(int argc, char *argv[]) {
         return -1;
     }
 
-    /* 6. Start Sub-Thread 2: Miscellaneous Background Thread with sleep/wakeup condition */
+    /* 7. Start Sub-Thread 2: Miscellaneous Background Thread with sleep/wakeup condition */
     g_MiscCtx.IsRunning      = 1U;
     g_MiscCtx.p_Mutex        = SDL_CreateMutex();
     g_MiscCtx.p_Cond         = SDL_CreateCond();
@@ -391,9 +493,9 @@ int main(int argc, char *argv[]) {
     g_MiscCtx.TickCount      = 0U;
     p_misc_thread = SDL_CreateThread(MiscBackgroundThreadEntry, "MiscBackgroundThread", &g_MiscCtx);
 
-    APP_INFO("Main loop started. Threads sleep when idle and wake up on event/message.");
+    APP_INFO("Main loop started. Running ./main again in another terminal will toggle this window.");
 
-    /* 7. Main Thread Loop: Sleep until woken by an OS event or a sub-thread queue wakeup */
+    /* 8. Main Thread Loop: Sleep until woken by an OS event or a sub-thread queue wakeup */
     while (0U == quit_flag) {
         /* Sleep until an OS SDL2 event or WindowWakeupMainThread signal arrives */
         (void)EventWaitOSOnMainThread(&quit_flag, 0U);
@@ -402,7 +504,7 @@ int main(int argc, char *argv[]) {
         (void)WindowQueueProcessAll();
     }
 
-    /* 8. Wake up and join MiscBackgroundThread cleanly */
+    /* 9. Wake up and join MiscBackgroundThread cleanly */
     if (NULL != g_MiscCtx.p_Mutex) {
         (void)SDL_LockMutex(g_MiscCtx.p_Mutex);
         g_MiscCtx.IsRunning = 0U;

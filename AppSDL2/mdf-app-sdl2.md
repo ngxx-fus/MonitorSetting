@@ -43,14 +43,18 @@
                     ...
             ```
         * Draw text/line/circle/rect(w-radius) | With filled or not
-        * Able to make scrollable table
+        * Able to make scrollable layer (a layer can attach a component like a table):
+            + Components inside a layer are positioned relative to `(0, 0)` of that layer.
+            + Layer `RectClip` (viewport) is positioned relative to `(0, 0)` of `MainWindow`.
         * Able to update all components
-        * Able to hide/show/adjust-szie of the main window
+        * Able to hide/show/adjust-szie of the main window (mode: maximize, floating)
+        * Able to receive user custome signal
+        * Shall support only instance, if App ís called, just toggle the 1st windows/instance
         * Able to add button with event (button is a component)
         * Able to add quick diag for yes/no
         * Provide timer (if SDL2 has it, just skip)
-        * Event Listeners: A thread received the event from the OS, then sequently exec all the registered callback Event (E.g: Event0).
-        * MainWindow shall be updated from sub-thread via an g_MainWindowUpdateQueue.
+        * Event Listeners: A thread received the event from the OS via a circular queue (`CircleQueue_t`), then sequently exec all the registered callback Event (E.g: Event0).
+        * MainWindow shall be updated from sub-thread via an `g_MainWindowUpdateQueue` (backed by `CircleQueue_t`).
         ```plaintext
             g_MainWindowUpdateQueue
                 |---Action0:

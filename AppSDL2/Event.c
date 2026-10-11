@@ -1,6 +1,6 @@
 /* file-desc **************************************************************************************
  * @filename    Event.c
- * @brief       Sleeping event listener sub-thread, callback dispatcher, and drag-and-drop logic.
+ * @brief       Sleeping event listener sub-thread, user signals, button hit-test, and drag/drop.
  * @note        Uses SDL_cond + SDL_mutex so event-thread and main-thread sleep until woken up.
  **************************************************************************************************/
 
@@ -17,16 +17,14 @@
 /* definitions ************************************************************************************
  **************************************************************************************************/
 
-/* Internal thread-safe ring buffer with condition variable for sleeping/waking EventListenerThread */
+/* Internal thread-safe circular queue with condition variable for sleeping/waking EventListenerThread */
 struct EventRingQueue_st {
-    EventData_t Events[APP_SDL2_MAX_EVENT_QUEUE];
-    uint32_t    Head;
-    uint32_t    Tail;
-    uint32_t    Count;
-    SDL_mutex  *p_Mutex;
-    SDL_cond   *p_Cond;
-    SDL_Thread *p_Thread;
-    uint8_t     IsRunning;
+    EventData_t   Events[APP_SDL2_MAX_EVENT_QUEUE];
+    CircleQueue_t Queue;
+    SDL_mutex    *p_Mutex;
+    SDL_cond     *p_Cond;
+    SDL_Thread   *p_Thread;
+    uint8_t       IsRunning;
 };
 typedef struct EventRingQueue_st EventRingQueue_t;
 
@@ -48,9 +46,6 @@ DragDropCtx_t g_DragDropCtx = {
  **************************************************************************************************/
 
 static EventRingQueue_t g_EventQueue = {
-    .Head      = 0U,
-    .Tail      = 0U,
-    .Count     = 0U,
     .p_Mutex   = NULL,
     .p_Cond    = NULL,
     .p_Thread  = NULL,
@@ -67,6 +62,7 @@ Err_t EventDispatchToComp(Comp_t *p_comp, const EventData_t *p_event);
 Err_t EventHandleDragDrop(Layer_t *p_layers, uint32_t layer_count, const EventData_t *p_event);
 Err_t EventDispatchToLayers(Layer_t *p_layers, uint32_t layer_count, const EventData_t *p_event);
 Err_t EventPushToListenerQueue(const EventData_t *p_event);
+Err_t EventSendUserSignal(uint32_t sig_code, void *p_user_data);
 Err_t EventPollOSOnMainThread(uint8_t *p_quit_requested);
 Err_t EventWaitOSOnMainThread(uint8_t *p_quit_requested, uint32_t timeout_ms);
 Err_t EventListenerThreadStart(void);
@@ -145,14 +141,34 @@ Err_t EventHandleDragDrop(Layer_t *p_layers, uint32_t layer_count, const EventDa
     if (EVENT_TYPE_MOUSE_DOWN == p_event->Type) {
         /* Search layers from top-most to bottom-most for a hit draggable component */
         for (layer_idx = (int32_t)layer_count - 1; layer_idx >= 0; layer_idx--) {
+            Layer_t *p_layer = &p_layers[layer_idx];
+            int32_t  local_x;
+            int32_t  local_y;
+
             /* Skip invisible layers */
-            if (0U == p_layers[layer_idx].IsVisible) {
+            if (0U == p_layer->IsVisible) {
                 /* Continue to next layer */
                 continue;
             }
+
+            /* Check if mouse is inside Layer RectClip (in MainWindow (0,0) coordinates) */
+            if ((p_layer->RectClip.W > 0U) && (p_layer->RectClip.H > 0U)) {
+                if ((p_event->MouseX < p_layer->RectClip.OffsetX) ||
+                    (p_event->MouseX >= (p_layer->RectClip.OffsetX + (int32_t)p_layer->RectClip.W)) ||
+                    (p_event->MouseY < p_layer->RectClip.OffsetY) ||
+                    (p_event->MouseY >= (p_layer->RectClip.OffsetY + (int32_t)p_layer->RectClip.H))) {
+                    /* Mouse is outside this layer's RectClip */
+                    continue;
+                }
+            }
+
+            /* Convert MainWindow mouse position to Layer (0,0) local coordinates */
+            local_x = p_event->MouseX - p_layer->RectClip.OffsetX - p_layer->ScrollX;
+            local_y = p_event->MouseY - p_layer->RectClip.OffsetY - p_layer->ScrollY;
+
             /* Iterate components in reverse order (top-most first) */
-            for (comp_idx = (int32_t)p_layers[layer_idx].CompCount - 1; comp_idx >= 0; comp_idx--) {
-                Comp_t *p_comp = &p_layers[layer_idx].p_Comps[comp_idx];
+            for (comp_idx = (int32_t)p_layer->CompCount - 1; comp_idx >= 0; comp_idx--) {
+                Comp_t *p_comp = &p_layer->p_Comps[comp_idx];
 
                 /* Skip non-draggable components */
                 if (0U == p_comp->IsDraggable) {
@@ -160,9 +176,9 @@ Err_t EventHandleDragDrop(Layer_t *p_layers, uint32_t layer_count, const EventDa
                     continue;
                 }
 
-                /* Perform hit test at current mouse position */
+                /* Perform hit test in Layer (0,0) local coordinates */
                 is_hit = 0U;
-                (void)CompHitTest(p_comp, p_event->MouseX, p_event->MouseY, &is_hit);
+                (void)CompHitTest(p_comp, local_x, local_y, &is_hit);
 
                 /* Begin dragging if mouse pressed inside draggable component */
                 if (0U != is_hit) {
@@ -190,7 +206,7 @@ Err_t EventHandleDragDrop(Layer_t *p_layers, uint32_t layer_count, const EventDa
 
             /* Acquire UI lock briefly while mutating component coordinates */
             (void)WindowLockUI();
-            /* Update component position to follow mouse cursor */
+            /* Update component position in Layer (0,0) coordinates to follow mouse cursor */
             (void)CompSetPosition(g_DragDropCtx.p_DraggedComp, new_x, new_y);
             /* Release UI lock immediately after coordinate update */
             (void)WindowUnlockUI();
@@ -230,7 +246,7 @@ Err_t EventHandleDragDrop(Layer_t *p_layers, uint32_t layer_count, const EventDa
  * @param layer_count[in] Number of layers
  * @param p_event[in] Incoming event to dispatch
  * @return APP_SUCCESS on success, or error status
- * @note Also runs drag-and-drop handler and mouse-wheel table scrolling
+ * @note Converts MainWindow mouse coords into Layer (0,0) coords using Layer RectClip
  */
 Err_t EventDispatchToLayers(Layer_t *p_layers, uint32_t layer_count, const EventData_t *p_event) {
     uint32_t layer_idx;
@@ -249,26 +265,69 @@ Err_t EventDispatchToLayers(Layer_t *p_layers, uint32_t layer_count, const Event
 
     /* Iterate through all layers to dispatch event to component listeners */
     for (layer_idx = 0U; layer_idx < layer_count; layer_idx++) {
+        Layer_t *p_layer = &p_layers[layer_idx];
+        uint8_t  in_rect_clip = 1U;
+        int32_t  local_x;
+        int32_t  local_y;
+
         /* Skip hidden layers */
-        if (0U == p_layers[layer_idx].IsVisible) {
+        if (0U == p_layer->IsVisible) {
             /* Continue to next layer */
             continue;
         }
+
+        /* Check if mouse cursor is inside Layer RectClip (in MainWindow (0,0) coords) */
+        if ((p_layer->RectClip.W > 0U) && (p_layer->RectClip.H > 0U)) {
+            if ((p_event->MouseX < p_layer->RectClip.OffsetX) ||
+                (p_event->MouseX >= (p_layer->RectClip.OffsetX + (int32_t)p_layer->RectClip.W)) ||
+                (p_event->MouseY < p_layer->RectClip.OffsetY) ||
+                (p_event->MouseY >= (p_layer->RectClip.OffsetY + (int32_t)p_layer->RectClip.H))) {
+                in_rect_clip = 0U;
+            }
+        }
+
+        /* Scroll entire layer if layer is marked IsScrollable and mouse wheel is inside RectClip */
+        if ((EVENT_TYPE_MOUSE_WHEEL == p_event->Type) &&
+            (0U != p_layer->IsScrollable) &&
+            (0U != in_rect_clip)) {
+            (void)WindowLockUI();
+            (void)LayerScroll(p_layer, p_event->WheelDeltaX * 16, p_event->WheelDeltaY * 16);
+            (void)WindowUnlockUI();
+            (void)WindowQueuePush(WIN_ACTION_UPDATE_ALL, NULL);
+        }
+
+        /* Convert MainWindow mouse position to Layer (0,0) local coordinates */
+        local_x = p_event->MouseX - p_layer->RectClip.OffsetX - p_layer->ScrollX;
+        local_y = p_event->MouseY - p_layer->RectClip.OffsetY - p_layer->ScrollY;
+
         /* Iterate through all components in the current layer */
-        for (comp_idx = 0U; comp_idx < p_layers[layer_idx].CompCount; comp_idx++) {
-            Comp_t *p_comp = &p_layers[layer_idx].p_Comps[comp_idx];
+        for (comp_idx = 0U; comp_idx < p_layer->CompCount; comp_idx++) {
+            Comp_t *p_comp = &p_layer->p_Comps[comp_idx];
 
-            /* Automatically scroll scrollable tables on mouse wheel events */
+            /* Scroll standalone table only when parent layer itself is not scrollable */
             if ((EVENT_TYPE_MOUSE_WHEEL == p_event->Type) &&
+                (0U == p_layer->IsScrollable) &&
                 (COMP_CAST_SCROLL_TABLE == p_comp->CastType) &&
-                (0U != p_comp->Type.Table.IsScrollable)) {
-                /* Lock UI briefly while updating scroll offsets */
+                (0U != p_comp->Type.Table.IsScrollable) &&
+                (0U != in_rect_clip)) {
                 (void)WindowLockUI();
-                (void)CompScrollTable(p_comp, p_event->WheelDeltaX * 12, p_event->WheelDeltaY * 12);
+                (void)CompScrollTable(p_comp, p_event->WheelDeltaX * 16, p_event->WheelDeltaY * 16);
                 (void)WindowUnlockUI();
-
-                /* Push redraw action to g_MainWindowUpdateQueue */
                 (void)WindowQueuePush(WIN_ACTION_UPDATE_ALL, p_comp);
+            }
+
+            /* For mouse button events, require cursor to be inside Layer RectClip and component */
+            if ((EVENT_TYPE_MOUSE_DOWN == p_event->Type) || (EVENT_TYPE_MOUSE_UP == p_event->Type)) {
+                uint8_t is_hit = 0U;
+                if (0U == in_rect_clip) {
+                    /* Skip if mouse click was outside this layer's RectClip */
+                    continue;
+                }
+                (void)CompHitTest(p_comp, local_x, local_y, &is_hit);
+                if (0U == is_hit) {
+                    /* Skip click callback if mouse cursor was outside this component */
+                    continue;
+                }
             }
 
             /* Dispatch event to current component listeners */
@@ -280,13 +339,13 @@ Err_t EventDispatchToLayers(Layer_t *p_layers, uint32_t layer_count, const Event
     return APP_SUCCESS;
 }
 
-/* Push an event into the Event Listener queue and wake up the sleeping EventListenerThread
+/* Push an event into the Event Listener circular queue and wake up EventListenerThread
  * @param p_event[in] Event payload to enqueue
- * @return APP_SUCCESS on success, or APP_ERROR_QUEUE_FULL if full
- * @note Signals g_EventQueue.p_Cond so the sleeping listener thread wakes up immediately
+ * @return APP_SUCCESS on success, or error code
+ * @note Uses CircleQueue_t (overwrite enabled) and coalesces consecutive mouse-move events
  */
 Err_t EventPushToListenerQueue(const EventData_t *p_event) {
-    uint32_t tail;
+    Err_t err = APP_SUCCESS;
 
     #if (1U == PARAM_CHECK_EN)
     /* Validate event pointer */
@@ -301,20 +360,21 @@ Err_t EventPushToListenerQueue(const EventData_t *p_event) {
         (void)SDL_LockMutex(g_EventQueue.p_Mutex);
     }
 
-    /* Check if event queue is full */
-    if (g_EventQueue.Count >= APP_SDL2_MAX_EVENT_QUEUE) {
-        /* Unlock mutex before returning queue full error */
-        if (NULL != g_EventQueue.p_Mutex) {
-            (void)SDL_UnlockMutex(g_EventQueue.p_Mutex);
+    /* Coalesce consecutive mouse move events so high-frequency motion does not flood the queue */
+    if ((EVENT_TYPE_MOUSE_MOVE == p_event->Type) && (g_EventQueue.Queue.Count > 0U)) {
+        uint32_t last_idx = (g_EventQueue.Queue.Tail + g_EventQueue.Queue.Capacity - 1U) %
+                            g_EventQueue.Queue.Capacity;
+        /* Overwrite the last queued event in-place if it is also a mouse move event */
+        if (EVENT_TYPE_MOUSE_MOVE == g_EventQueue.Events[last_idx].Type) {
+            g_EventQueue.Events[last_idx] = *p_event;
+        } else {
+            /* Push mouse move into circular queue (overwrites oldest if full) */
+            err = CircleQueuePush(&g_EventQueue.Queue, p_event);
         }
-        APP_ERR("Event listener queue is full!");
-        return APP_ERROR_QUEUE_FULL;
+    } else {
+        /* Push event into circular queue (overwrites oldest if full) */
+        err = CircleQueuePush(&g_EventQueue.Queue, p_event);
     }
-
-    tail = g_EventQueue.Tail;
-    g_EventQueue.Events[tail] = *p_event;
-    g_EventQueue.Tail = (tail + 1U) % APP_SDL2_MAX_EVENT_QUEUE;
-    g_EventQueue.Count++;
 
     /* Signal condition variable to wake up sleeping EventListenerThread */
     if (NULL != g_EventQueue.p_Cond) {
@@ -326,8 +386,30 @@ Err_t EventPushToListenerQueue(const EventData_t *p_event) {
         (void)SDL_UnlockMutex(g_EventQueue.p_Mutex);
     }
 
-    /* Return success after enqueuing and signaling event */
-    return APP_SUCCESS;
+    /* Return push status */
+    return err;
+}
+
+/* Send a custom user signal event into the Event Listener queue
+ * @param sig_code[in] Application-defined signal code
+ * @param p_user_data[in] Optional user payload pointer
+ * @return APP_SUCCESS on success, or error code
+ * @note Wakes up EventListenerThread to execute EVENT_TYPE_USER_SIGNAL callbacks
+ */
+Err_t EventSendUserSignal(uint32_t sig_code, void *p_user_data) {
+    EventData_t usr_ev;
+
+    usr_ev.Type        = EVENT_TYPE_USER_SIGNAL;
+    usr_ev.MouseX      = 0;
+    usr_ev.MouseY      = 0;
+    usr_ev.WheelDeltaX = 0;
+    usr_ev.WheelDeltaY = 0;
+    usr_ev.KeyCode     = 0U;
+    usr_ev.SysCode     = sig_code;
+    usr_ev.p_UserData  = p_user_data;
+
+    /* Push custom user signal to listener queue */
+    return EventPushToListenerQueue(&usr_ev);
 }
 
 /* Translate a single SDL_Event and push it to the Event Listener thread queue
@@ -375,6 +457,8 @@ static void TranslateAndForwardSdlEvent(const SDL_Event *p_sdl_ev, uint8_t *p_qu
             app_ev.Type        = EVENT_TYPE_MOUSE_WHEEL;
             app_ev.WheelDeltaX = p_sdl_ev->wheel.x;
             app_ev.WheelDeltaY = p_sdl_ev->wheel.y;
+            /* Query current mouse cursor position in MainWindow (0,0) coordinates */
+            (void)SDL_GetMouseState(&app_ev.MouseX, &app_ev.MouseY);
             /* Break on mouse wheel */
             break;
         case SDL_KEYDOWN:
@@ -457,6 +541,9 @@ Err_t EventWaitOSOnMainThread(uint8_t *p_quit_requested, uint32_t timeout_ms) {
     }
     #endif /* (1U == PARAM_CHECK_EN) */
 
+    /* Check if single-instance toggle signal was received from another process */
+    (void)WindowCheckSingleInstanceSignal();
+
     /* Sleep until an SDL event or sub-thread wakeup arrives */
     if (0U == timeout_ms) {
         /* Sleep indefinitely until woken by an event or message */
@@ -465,6 +552,9 @@ Err_t EventWaitOSOnMainThread(uint8_t *p_quit_requested, uint32_t timeout_ms) {
         /* Sleep up to timeout_ms milliseconds */
         wait_res = SDL_WaitEventTimeout(&sdl_ev, (int)timeout_ms);
     }
+
+    /* Re-check single-instance toggle signal after waking up */
+    (void)WindowCheckSingleInstanceSignal();
 
     /* Process the waking event and drain any remaining queued events */
     if (1 == wait_res) {
@@ -494,17 +584,14 @@ static int EventListenerThreadEntry(void *p_arg) {
         if (NULL != g_EventQueue.p_Mutex) {
             (void)SDL_LockMutex(g_EventQueue.p_Mutex);
 
-            /* Put EventListenerThread to sleep while queue is empty and thread is running */
-            while ((0U == g_EventQueue.Count) && (0U != g_EventQueue.IsRunning)) {
+            /* Put EventListenerThread to sleep while circular queue is empty and thread is running */
+            while ((0U == g_EventQueue.Queue.Count) && (0U != g_EventQueue.IsRunning)) {
                 /* Wait on condition variable (releases mutex while sleeping) */
                 (void)SDL_CondWait(g_EventQueue.p_Cond, g_EventQueue.p_Mutex);
             }
 
-            /* Pop one event from queue after waking up */
-            if (g_EventQueue.Count > 0U) {
-                ev = g_EventQueue.Events[g_EventQueue.Head];
-                g_EventQueue.Head = (g_EventQueue.Head + 1U) % APP_SDL2_MAX_EVENT_QUEUE;
-                g_EventQueue.Count--;
+            /* Pop one event from circular queue after waking up */
+            if (APP_SUCCESS == CircleQueuePop(&g_EventQueue.Queue, &ev)) {
                 has_ev = 1U;
             }
 
@@ -524,7 +611,7 @@ static int EventListenerThreadEntry(void *p_arg) {
 
 /* Start the dedicated Event Listener sub-thread with mutex and condition variable
  * @return APP_SUCCESS on success, or APP_ERROR_INIT_FAILED on thread creation failure
- * @note Creates SDL_mutex, SDL_cond, and spawns SDL_Thread "EventListenerThread"
+ * @note Initializes CircleQueue_t, SDL_mutex, SDL_cond, and spawns "EventListenerThread"
  */
 Err_t EventListenerThreadStart(void) {
     /* Return early if thread is already running */
@@ -541,9 +628,12 @@ Err_t EventListenerThreadStart(void) {
         return APP_ERROR_INIT_FAILED;
     }
 
-    g_EventQueue.Head      = 0U;
-    g_EventQueue.Tail      = 0U;
-    g_EventQueue.Count     = 0U;
+    /* Initialize circular queue with overwrite enabled (allow_overwrite = 1U) */
+    (void)CircleQueueInit(&g_EventQueue.Queue,
+                          g_EventQueue.Events,
+                          (uint32_t)sizeof(EventData_t),
+                          APP_SDL2_MAX_EVENT_QUEUE,
+                          1U);
     g_EventQueue.IsRunning = 1U;
 
     /* Spawn SDL event listener worker thread */

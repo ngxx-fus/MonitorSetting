@@ -1,6 +1,7 @@
 # Build directories and generated binaries
 build/
 main
+AppExec
 *.o
 *.a
 *.so
