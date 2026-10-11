@@ -1,0 +1,6 @@
+# AppSDL2 build artifacts
+build/
+*.o
+*.a
+*.so
+

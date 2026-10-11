@@ -1,0 +1,6 @@
+# AppCommon build artifacts
+build/
+*.o
+*.a
+*.so
+

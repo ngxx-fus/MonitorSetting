@@ -1,0 +1,24 @@
+# Doxyfile 1.9.8 for MonitorSelection
+
+PROJECT_NAME           = "MonitorSelection"
+PROJECT_NUMBER         = "1.0.0"
+PROJECT_BRIEF          = "Monitor Selection Application with AppCommon and AppSDL2"
+OUTPUT_DIRECTORY       = docs
+
+OPTIMIZE_OUTPUT_FOR_C  = YES
+EXTRACT_ALL            = YES
+EXTRACT_PRIVATE        = YES
+EXTRACT_STATIC         = YES
+
+INPUT                  = .
+RECURSIVE              = YES
+FILE_PATTERNS          = *.c *.h
+EXCLUDE_PATTERNS       = */build/* */.git/* */.CodeTemplate/* */docs/*
+
+GENERATE_HTML          = YES
+HTML_OUTPUT            = html
+GENERATE_LATEX         = NO
+HAVE_DOT               = NO
+QUIET                  = YES
+WARN_IF_UNDOCUMENTED   = NO
+CREATE_SUBDIRS         = YES

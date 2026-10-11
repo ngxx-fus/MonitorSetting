@@ -1,0 +1,17 @@
+# Build directories and generated binaries
+build/
+main
+*.o
+*.a
+*.so
+*.out
+
+# Generated documentation
+docs/
+
+# Editor / IDE temporary files
+*.swp
+*~
+.vscode/
+.idea/
+

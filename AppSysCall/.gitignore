@@ -1,0 +1,6 @@
+# AppSysCall build artifacts
+build/
+*.o
+*.a
+*.so
+

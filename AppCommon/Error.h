@@ -9,17 +9,21 @@
  /* macros *****************************************************************************************
  **************************************************************************************************/
 
- #define APP_STAT_NUM            (5)
+#define APP_STAT_NUM            (9U)
 
 /* definitions ************************************************************************************
  **************************************************************************************************/
 
- enum AppStatus_e {
+enum AppStatus_e {
     APP_SUCCESS                 = (0U),
     APP_ERROR                   = (0x80000000U),
     APP_ERROR_NULL              = (0x80000001U),
     APP_ERROR_INVALID_PARAM     = (0x80000002U),
     APP_ERROR_MALOC_FAILED      = (0x80000003U),
+    APP_ERROR_QUEUE_FULL        = (0x80000004U),
+    APP_ERROR_QUEUE_EMPTY       = (0x80000005U),
+    APP_ERROR_INIT_FAILED       = (0x80000006U),
+    APP_ERROR_RENDER_FAILED     = (0x80000007U)
 };
 typedef enum AppStatus_e   Err_t;
 typedef enum AppStatus_e   Return_t;
